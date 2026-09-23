@@ -1,0 +1,64 @@
+# ── Environment & Secrets ──
+backend/.env
+.env
+test_open.py
+test_*.py
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.venv/
+
+# ── Node ──
+node_modules/
+frontend/dist/
+
+# ── Runtime / Temp ──
+backend/output/images/*
+backend/output/reference_cache/*
+backend/output/downloads/*
+!backend/output/images/.gitkeep
+!backend/output/reference_cache/.gitkeep
+!backend/output/downloads/.gitkeep
+*.db-shm
+*.db-wal
+backend/enrichment.db
+backend/uvicorn.log
+backend/backend.log
+backend/celery.log
+backend/celerybeat-schedule
+backend/celerybeat-schedule.db
+
+# ── OS ──
+.DS_Store
+Thumbs.db
+# ── Added for Safety ──
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Frontend/Node
+frontend/node_modules/
+frontend/.env
+frontend/.env.*
+
+# Python Cache (recursive)
+**/__pycache__/
+**/*.pyc
+
+# Logs
+*.log
+
+# Misc
+tools_dump.json
+
+# ── Databases ──
+*.db
+*.sqlite
+*.sqlite3
+backend/scrape_data.db

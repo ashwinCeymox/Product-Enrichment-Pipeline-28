@@ -1,0 +1,107 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "${HOST_DB_PORT:-5433}:5432"
+    environment:
+      POSTGRES_USER: pgweb
+      POSTGRES_PASSWORD: pgweb
+      POSTGRES_DB: pgweb
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pgweb"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  pgweb:
+    image: sosedoff/pgweb
+    ports:
+      - "${HOST_PGWEB_PORT:-8081}:8081"
+    environment:
+      PGWEB_DATABASE_URL: postgres://pgweb:pgweb@postgres:5432/pgweb?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "${HOST_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+
+  api:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "${HOST_API_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  celery_worker:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.celery_app worker --loglevel=info -c 1
+    volumes:
+      - ./backend:/app
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  celery_beat:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.celery_app beat --loglevel=info
+    volumes:
+      - ./backend:/app
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${HOST_WEB_PORT:-80}:80"
+    depends_on:
+      - api
+
+  steel-api:
+    image: ghcr.io/steel-dev/steel-browser-api:latest
+    ports:
+      - "${HOST_STEEL_PORT:-3000}:3000"
+      - "${HOST_STEEL_DEBUG_PORT:-9223}:9223"
+    restart: unless-stopped
+
+  steel-ui:
+    image: ghcr.io/steel-dev/steel-browser-ui:latest
+    ports:
+      - "5173:5173"
+    depends_on:
+      - steel-api
+
+volumes:
+  pg_data:
+  redis_data:

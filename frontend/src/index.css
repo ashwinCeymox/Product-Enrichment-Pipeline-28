@@ -1,0 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #4F46E5;
+  --color-primary-hover: #4338CA;
+  --font-sans: "Inter", sans-serif;
+  --font-mono: "'JetBrains Mono'", monospace;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-slate-50);
+    color: var(--color-slate-900);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@utility sidebar-collapsed {
+  width: 64px;
+}
+
+@utility sidebar-expanded {
+  width: 240px;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Toast: expand in → hold → shrink out (total = 2.5s to match JS timeout) */
+@keyframes toast-pop {
+  0%   { transform: translateX(-50%) scale(0.6); opacity: 0; }
+  12%  { transform: translateX(-50%) scale(1.05); opacity: 1; }
+  18%  { transform: translateX(-50%) scale(1); opacity: 1; }
+  80%  { transform: translateX(-50%) scale(1); opacity: 1; }
+  100% { transform: translateX(-50%) scale(0.6); opacity: 0; }
+}
+
+@utility toast-animate {
+  animation: toast-pop 2.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@utility scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
