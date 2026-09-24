@@ -19,7 +19,7 @@ export default function Settings() {
   const [openRouterModels, setOpenRouterModels] = useState([]);
   const [fetchingModels, setFetchingModels] = useState(false);
   const [selectedModels, setSelectedModels] = useState({
-    scraping_model: 'deepseek/deepseek-chat',
+    scraping_model: 'google/gemini-2.5-flash',
     image_generation_model: 'google/gemini-2.5-flash-image'
   });
 
@@ -67,7 +67,7 @@ export default function Settings() {
     try {
       const res = await api.get('/settings/models');
       setSelectedModels({
-        scraping_model: res.data.scraping_model || 'deepseek/deepseek-chat',
+        scraping_model: res.data.scraping_model || 'google/gemini-2.5-flash',
         image_generation_model: res.data.image_generation_model || 'google/gemini-2.5-flash-image'
       });
     } catch (err) {
@@ -83,14 +83,14 @@ export default function Settings() {
         setOpenRouterModels(res.data.models || []);
       } else {
         setOpenRouterModels([
-          { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat (Fallback)' },
+          { id: 'google/gemini-2.5-flash', name: 'DeepSeek Chat (Fallback)' },
           { id: 'google/gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image (Fallback)' }
         ]);
       }
     } catch (err) {
       console.error("Failed to fetch openrouter models", err);
       setOpenRouterModels([
-        { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat (Fallback)' },
+        { id: 'google/gemini-2.5-flash', name: 'DeepSeek Chat (Fallback)' },
         { id: 'google/gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image (Fallback)' }
       ]);
     } finally {
@@ -405,14 +405,15 @@ export default function Settings() {
                         .filter(m => [
                           'openai/gpt-4o',
                           'openai/gpt-4o-mini',
-                          'openai/gpt-3.5-turbo',
-                          'anthropic/claude-3.5-haiku',
-                          'google/gemini-3.1-flash',
-                          'google/gemini-3.1-pro',
-                          'google/gemini-2.5-flash',
+                          'anthropic/claude-haiku-4.5',
+                          'anthropic/claude-sonnet-5',
+                          'google/gemini-3.8-flash',
+                          'google/gemini-3.7-flash',
+                          'google/gemini-3.6-flash',
+                          'google/gemini-3.5-flash',
                           'google/gemini-2.5-pro',
-                          'deepseek/deepseek-v4.1-flash',
-                          'deepseek/deepseek-chat'
+                          'google/gemini-2.5-flash',
+                          'google/gemini-2.5-flash'
                         ].includes(m.id))
                         .map(m => (
                         <option key={m.id} value={m.id}>{m.name || m.id}</option>
@@ -431,11 +432,8 @@ export default function Settings() {
                       {openRouterModels
                         .filter(m => [
                           'google/gemini-3-pro-image',
-                          'google/gemini-3-pro-image-preview',
                           'google/gemini-3.1-flash-image',
-                          'google/gemini-3.1-flash-image-preview',
                           'google/gemini-3.1-flash-lite-image',
-                          'google/gemini-3.1-flash-lite-image-preview',
                           'google/gemini-2.5-flash-image'
                         ].includes(m.id))
                         .map(m => (

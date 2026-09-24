@@ -172,7 +172,9 @@ export default function ActiveFitnessPreview({ productData, onViewInImageReview 
         {/* Buy Box */}
         <div className="order-3 pb-10">
           <h1 className="text-[26px] font-extrabold leading-tight mb-3.5 text-[#111111]">{identity.product_name}</h1>
-          <div className="text-[24px] font-extrabold mb-3.5">AED {pricing.price || 'XXX.00'}</div>
+          <div className="text-[24px] font-extrabold mb-3.5">
+            {pricing.currency || 'AED'} {pricing.item_retail_price || pricing.price_with_tax || pricing.price || 'XXX.00'}
+          </div>
 
 
 

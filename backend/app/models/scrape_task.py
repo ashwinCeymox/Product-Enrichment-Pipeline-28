@@ -41,6 +41,7 @@ class ScrapeTask(Base):
     progress = Column(Integer, default=0)  # 0–100
     scheduled_date = Column(Date, nullable=True, index=True)
     generate_ai_images = Column(Boolean, default=False)
+    text_model_override = Column(String, nullable=True)
 
     # Results
     source_data = Column(JSON, nullable=True)       # Stores structured factual snapshot before enrichment

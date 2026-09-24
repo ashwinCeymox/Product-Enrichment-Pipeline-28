@@ -32,6 +32,9 @@ class ImageAsset(Base):
     storage_path = Column(Text, nullable=True)         # local path or cloud URL
     prompt_text = Column(Text, nullable=True)          # prompt used for generation
     variation_group = Column(String, nullable=False)   # e.g. "hero_banner", "feature_shot_1"
+    
+    text_model = Column(String, nullable=True)         # model used for prompt gen
+    image_model = Column(String, nullable=True)        # model used for image gen
 
     # ── Approval ─────────────────────────────────────
     status = Column(String, default="pending")          # pending / approved / rejected

@@ -11,6 +11,7 @@ export default function CreateJob() {
   const [scheduledDate, setScheduledDate] = useState('');
   const [productType, setProductType] = useState('simple');
   const [generateAiImages, setGenerateAiImages] = useState(false);
+  const [textModel, setTextModel] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -46,7 +47,8 @@ export default function CreateJob() {
         scheduled_date: scheduledDate || null,
         product_type: productType,
         created_by: 'admin',
-        generate_ai_images: generateAiImages
+        generate_ai_images: generateAiImages,
+        text_model_override: textModel || undefined
       });
       setMessage(`Success! ${res.data.message}`);
       setUrls('');
@@ -193,7 +195,30 @@ export default function CreateJob() {
               <p className="text-xs text-slate-500 mt-1">If left blank, task starts immediately.</p>
             </div>
             {/* Empty div for the second column to constrain width */}
-            <div></div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Text Model <span className="text-slate-400 font-normal">(Optional)</span>
+              </label>
+              <select 
+                value={textModel}
+                onChange={e => setTextModel(e.target.value)}
+                className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-primary focus:border-primary sm:text-sm bg-white"
+              >
+                <option value="">System Default</option>
+                <option value="openai/gpt-4o">GPT-4o</option>
+                <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
+                <option value="anthropic/claude-sonnet-5">Claude 5 Sonnet</option>
+                <option value="anthropic/claude-haiku-4.5">Claude 4.5 Haiku</option>
+                <option value="google/gemini-3.8-flash">Gemini 3.8 Flash</option>
+                <option value="google/gemini-3.7-flash">Gemini 3.7 Flash</option>
+                <option value="google/gemini-3.6-flash">Gemini 3.6 Flash</option>
+                <option value="google/gemini-3.5-flash">Gemini 3.5 Flash</option>
+                <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
+                <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+                
+              </select>
+              <p className="text-xs text-slate-500 mt-1">Overrides the global settings model for this task.</p>
+            </div>
           </div>
 
           <div>

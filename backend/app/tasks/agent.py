@@ -1,6 +1,10 @@
 import asyncio
 import json
 import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 from litellm import completion
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client, StdioServerParameters

@@ -37,6 +37,7 @@ class _SubmitBase(BaseModel):
     created_by: Optional[str] = Field(None, max_length=255)
     product_type: str = "simple"
     generate_ai_images: bool = False
+    text_model_override: Optional[str] = None
 
 
 class SingleURLRequest(_SubmitBase):

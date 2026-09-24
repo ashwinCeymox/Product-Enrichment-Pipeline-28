@@ -22,7 +22,7 @@ const Login = () => {
     try {
       // Use URLSearchParams for OAuth2 Form Data
       const params = new URLSearchParams();
-      params.append('username', email);
+      params.append('username', email.trim());
       params.append('password', password || 'dummy'); // dummy string for pending users who don't have passwords yet
       
       const response = await api.post('/auth/login', params, {

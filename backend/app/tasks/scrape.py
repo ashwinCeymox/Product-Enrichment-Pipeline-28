@@ -451,8 +451,9 @@ def process_scrape(self, task_id: str):
                         )
                         try:
                             from app.utils.json_utils import sanitize_llm_json
+                            actual_val_model = task.text_model_override if getattr(task, 'text_model_override', None) else get_dynamic_env('SCRAPING_MODEL', 'deepseek/deepseek-chat')
                             val_resp = completion(
-                                model=f"openrouter/{get_dynamic_env('SCRAPING_MODEL', 'deepseek/deepseek-chat')}",
+                                model=f"openrouter/{actual_val_model}",
                                 messages=[
                                     {"role": "system", "content": "You are a strict product URL validator.\n\nRULES:\n1. Your ONLY job is to filter a list of URLs.\n2. Output ONLY raw JSON. No markdown fences.\n3. Format MUST be exactly: {\"valid_urls\": [\"url1\", \"url2\"]}"},
                                     {"role": "user", "content": validation_prompt}
@@ -558,17 +559,17 @@ def process_scrape(self, task_id: str):
             primary_json = build_product_json(html_content, task.url)
 
             # Truncate text to avoid exceeding model context limits (16k-32k max usually)
-            clean_text_truncated = clean_text[:30000] 
             competitor_text = "\n\n".join(competitor_htmls)[:30000]
             
-            prompt2 = f"Primary URL STRUCTURED JSON-LD:\n{primary_json.model_dump_json(indent=2)}\n\nPrimary URL Content (Cleaned Text):\n{clean_text_truncated}\n\nPhase 1 Agent Data (Structured JSON):\n{json.dumps(source_data, indent=2)}\n\nFound Images:\n{images_context}\n\nExtra Search Context (Serper):\n{serper_data}\n\nCompetitor Content:\n{competitor_text}\n\nMerge the Competitor Content and JSON-LD data into the Source Data to enrich it, filling in any missing fields. Keep ALL image URLs provided in the 'Found Images' list; do not limit or arbitrarily truncate the images array. Output the final JSON exactly as specified in the OUTPUT FORMAT."
+            prompt2 = f"Primary URL STRUCTURED JSON-LD:\n{primary_json.model_dump_json(indent=2)}\n\nPhase 1 Agent Data (Structured JSON):\n{json.dumps(source_data, indent=2)}\n\nExtra Search Context (Serper):\n{serper_data}\n\nCompetitor Content:\n{competitor_text}\n\nMerge the Competitor Content and JSON-LD data into the Source Data to enrich it, filling in any missing fields. For the 'images' array, rely on the images extracted in the JSON-LD data. Output the final JSON exactly as specified in the OUTPUT FORMAT."
             
             # Save the LLM prompt alongside raw HTML so the frontend can display both
             existing_html = task.raw_html or ""
             # Strip out any previous Prompt2 if this is a reschedule to avoid infinite growing
             if "\n<!--LLM_INPUT_2_DELIMITER-->\n" in existing_html:
                 existing_html = existing_html.split("\n<!--LLM_INPUT_2_DELIMITER-->\n")[0]
-            task.raw_html = clean_text + "\n<!--LLM_INPUT_DELIMITER-->\n" + existing_html + "\n<!--LLM_INPUT_2_DELIMITER-->\n" + prompt2
+            json_ld_display = f"Primary URL STRUCTURED JSON-LD:\n{primary_json.model_dump_json(indent=2)}"
+            task.raw_html = json_ld_display + "\n<!--LLM_INPUT_DELIMITER-->\n" + existing_html + "\n<!--LLM_INPUT_2_DELIMITER-->\n" + prompt2
             db.commit()
             
             logger.info("FINAL LLM INPUT (PROMPT 2):")
@@ -576,8 +577,9 @@ def process_scrape(self, task_id: str):
             
             try:
                 from app.utils.json_utils import sanitize_llm_json
+                actual_model = task.text_model_override if getattr(task, 'text_model_override', None) else get_dynamic_env('SCRAPING_MODEL', 'deepseek/deepseek-chat')
                 ai_resp2 = completion(
-                    model=f"openrouter/{get_dynamic_env('SCRAPING_MODEL', 'deepseek/deepseek-chat')}",
+                    model=f"openrouter/{actual_model}",
                     messages=[
                         {"role": "system", "content": system_prompt_text},
                         {"role": "user", "content": prompt2}

@@ -87,6 +87,7 @@ def _build_jobs(
     created_by: Optional[str],
     product_type: str,
     generate_ai_images: bool,
+    text_model_override: Optional[str] = None,
     background_tasks: BackgroundTasks,
 ) -> tuple[str, List[ScrapeTask]]:
     """Insert one ScrapeTask per URL under a shared batch_id."""
@@ -105,6 +106,7 @@ def _build_jobs(
             scheduled_date=scheduled_date,
             created_by=created_by,
             generate_ai_images=generate_ai_images,
+            text_model_override=text_model_override,
             activity_log=[{"timestamp": time.time(), "action": "created", "detail": f"Job created for {url}"}],
         )
         db.add(job)
@@ -165,25 +167,10 @@ def create_job(
     _check_credentials()
     valid_urls = [str(u) for u in payload.urls]
     
-    # ── Deepseek Credit Check ────────────────────────────────────
-    from app.services import credit_service
-    ds_check = credit_service.check_deepseek_initial(len(valid_urls))
-    
-    if ds_check["status"] == "block":
-        raise HTTPException(
-            status_code=402,
-            detail={
-                "error": "insufficient_credits",
-                "provider": "deepseek",
-                "message": ds_check.get("reason", "Insufficient Deepseek credits"),
-                "balance": ds_check.get("balance"),
-                "job_cost": ds_check.get("job_cost"),
-                "block_threshold": ds_check.get("block_threshold"),
-            }
-        )
-    # ── End Deepseek Credit Check ────────────────────────────────
+
 
     # ── OpenRouter Credit Check ──────────────────────────────────
+    from app.services import credit_service
     if payload.generate_ai_images:
         # Assume roughly 4 images per URL
         or_check = credit_service.check_initial_approval(len(valid_urls) * 4)
@@ -210,6 +197,7 @@ def create_job(
         created_by=payload.created_by,
         product_type=payload.product_type,
         generate_ai_images=payload.generate_ai_images,
+        text_model_override=payload.text_model_override,
         background_tasks=background_tasks,
     )
     response = BatchSubmitResponse(
@@ -222,9 +210,6 @@ def create_job(
         jobs=jobs,
         message=f"{len(jobs)} URL job(s) submitted successfully.",
     )
-    # Attach warning to response if applicable
-    if ds_check["status"] == "warn":
-        response.message += f" ⚠️ {ds_check.get('reason', 'Deepseek credits running low.')}"
     return response
 
 
@@ -277,25 +262,10 @@ async def upload_csv(
     if not valid_urls:
         raise HTTPException(status_code=422, detail="No valid URLs found in CSV.")
 
-    # ── Deepseek Credit Check ────────────────────────────────────
-    from app.services import credit_service
-    ds_check = credit_service.check_deepseek_initial(len(valid_urls))
-    
-    if ds_check["status"] == "block":
-        raise HTTPException(
-            status_code=402,
-            detail={
-                "error": "insufficient_credits",
-                "provider": "deepseek",
-                "message": ds_check.get("reason", "Insufficient Deepseek credits"),
-                "balance": ds_check.get("balance"),
-                "job_cost": ds_check.get("job_cost"),
-                "block_threshold": ds_check.get("block_threshold"),
-            }
-        )
-    # ── End Deepseek Credit Check ────────────────────────────────
+
 
     # ── OpenRouter Credit Check ──────────────────────────────────
+    from app.services import credit_service
     if generate_ai_images:
         # Assume roughly 4 images per URL
         or_check = credit_service.check_initial_approval(len(valid_urls) * 4)
@@ -335,8 +305,7 @@ async def upload_csv(
         jobs=jobs,
         message=f"{len(jobs)} URL(s) submitted; {len(invalid_urls)} skipped.",
     )
-    if ds_check["status"] == "warn":
-        response.message += f" ⚠️ {ds_check.get('reason', 'Deepseek credits running low.')}"
+
     return response
 
 

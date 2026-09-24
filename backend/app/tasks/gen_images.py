@@ -130,6 +130,10 @@ async def _run_image_pipeline(job_id: str):
         def should_skip(group_type: str, index: int) -> bool:
             var_group = f"lifestyle_{index+1}" if group_type == "lifestyle" else f"feature_{index+1}"
             return var_group in existing_groups
+            
+        from app.config_loader import get_dynamic_env
+        current_text_model = get_dynamic_env("SCRAPING_MODEL") or "unknown-text-model"
+        current_image_model = get_dynamic_env("IMAGE_GENERATION_MODEL") or "unknown-image-model"
         
         def on_image_attempt(group_type: str, index: int, prompt: str, title: str = None):
             var_group = f"lifestyle_{index+1}" if group_type == "lifestyle" else f"feature_{index+1}"
@@ -145,13 +149,17 @@ async def _run_image_pipeline(job_id: str):
                 existing.asset_name = asset_name
                 existing.prompt_text = prompt
                 existing.status = "generating"
+                existing.text_model = current_text_model
+                existing.image_model = current_image_model
             else:
                 asset = ImageAsset(
                     scrape_task_id=job.id,
                     asset_name=asset_name,
                     prompt_text=prompt,
                     variation_group=var_group,
-                    status="generating"
+                    status="generating",
+                    text_model=current_text_model,
+                    image_model=current_image_model
                 )
                 db.add(asset)
             db.commit()
@@ -183,6 +191,8 @@ async def _run_image_pipeline(job_id: str):
                 existing.storage_path = img_data["path"]
                 existing.prompt_text = prompt
                 existing.status = "pending"
+                existing.text_model = current_text_model
+                existing.image_model = current_image_model
             else:
                 asset = ImageAsset(
                     scrape_task_id=job.id,
@@ -190,7 +200,9 @@ async def _run_image_pipeline(job_id: str):
                     storage_path=img_data["path"],
                     prompt_text=prompt,
                     variation_group=var_group,
-                    status="pending"
+                    status="pending",
+                    text_model=current_text_model,
+                    image_model=current_image_model
                 )
                 db.add(asset)
             db.commit()
@@ -276,7 +288,7 @@ def generate_images_task(self, job_id: str):
     return f"Image generation finished for {job_id}"
 
 @celery_app.task(bind=True, name="app.tasks.gen_images.regenerate_asset_task")
-def regenerate_asset_task(self, target_asset_id: str, reference_asset_id: str = None):
+def regenerate_asset_task(self, target_asset_id: str, reference_asset_id: str = None, override_model: str = None):
     """Regenerate a single image asset using an isolated reference image."""
     from app.tasks.tools.image_generator import _generate_single_image
     import uuid
@@ -287,6 +299,9 @@ def regenerate_asset_task(self, target_asset_id: str, reference_asset_id: str = 
         if not target_asset: return
         job = db.query(ScrapeTask).filter(ScrapeTask.id == target_asset.scrape_task_id).first()
         product = job.product_data if job else {}
+        
+        from app.config_loader import get_dynamic_env
+        model_to_use = override_model or get_dynamic_env("IMAGE_GENERATION_MODEL")
         sku = product.get("product_identity", {}).get("sku", "unknown")
         
         # Grab original scraped images from the reference cache to preserve the product's true features.
@@ -308,7 +323,8 @@ def regenerate_asset_task(self, target_asset_id: str, reference_asset_id: str = 
             url, cost = asyncio.run(_generate_single_image(
                 prompt=target_asset.prompt_text,
                 reference_image_paths=ref_image_paths,
-                save_path=target_asset.storage_path
+                save_path=target_asset.storage_path,
+                model=model_to_use
             ))
             target_asset.status = "success" # Set to success upon successful generation
             url_path = "/images/" + os.path.basename(target_asset.storage_path)

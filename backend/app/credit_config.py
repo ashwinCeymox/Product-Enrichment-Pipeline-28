@@ -10,11 +10,11 @@ PER_IMAGE_COST_USD = 0.0389
 
 # Threshold at initial JSON approval — if remaining credits AFTER
 # deducting job cost fall below this, show a WARNING to the user.
-INITIAL_APPROVAL_THRESHOLD_USD = 5
+INITIAL_APPROVAL_THRESHOLD_USD = 6
 
 # Threshold during generation / variant requests — if remaining credits
 # fall below this, BLOCK and show "Insufficient Credits" modal.
-MID_TASK_THRESHOLD_USD = 2
+MID_TASK_THRESHOLD_USD = 3
 
 # All comparisons happen in USD, matching OpenRouter's /credits response.
 CURRENCY_FOR_LOGIC = "USD"

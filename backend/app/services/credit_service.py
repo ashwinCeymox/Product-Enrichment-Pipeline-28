@@ -224,9 +224,9 @@ def check_initial_approval(total_images):
 
     Returns dict with status: 'ok', 'warn', or 'block'.
 
-    Threshold behavior (confirmed by product owner):
-      $5 threshold = WARNING (user can proceed but is alerted)
-      $2 threshold = BLOCK  (Insufficient Credits modal, job cannot start)
+    Threshold behavior:
+      $6 threshold = WARNING (user can proceed but is alerted)
+      $3 threshold = BLOCK  (Insufficient Credits modal, job cannot start)
     """
     actual = get_actual_remaining()
     if actual is None:

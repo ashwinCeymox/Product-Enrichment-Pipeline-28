@@ -48,6 +48,7 @@ async def _generate_single_image(
     prompt: str,
     reference_image_paths: list[str] | None,
     save_path: str,
+    model: str = None,
 ) -> tuple[str, float]:
     """
     Calls OpenRouter chat completions for one image prompt.
@@ -94,8 +95,9 @@ async def _generate_single_image(
     content.append({"type": "text", "text": prompt + square_instruction})
 
     # ── Build OpenRouter chat completions payload ────────────
+    model_to_use = model or get_dynamic_env("IMAGE_GENERATION_MODEL", "google/gemini-2.5-flash-image")
     payload = {
-        "model": get_dynamic_env("IMAGE_GENERATION_MODEL", "google/gemini-2.5-flash-image"),
+        "model": model_to_use,
         "modalities": ["image", "text"],   # ← CRITICAL for image generation
         "messages": [
             {"role": "user", "content": content}

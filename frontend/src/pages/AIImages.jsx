@@ -47,6 +47,14 @@ export default function AIImages() {
   const [remainingCredits, setRemainingCredits] = useState(null);
   const [showCreditModal, setShowCreditModal] = useState(false);
   const [creditError, setCreditError] = useState(null);
+  
+  const [overrideModel, setOverrideModel] = useState("");
+
+  const formatModel = (val) => {
+    if (!val) return "Unknown";
+    const parts = val.split('/');
+    return parts.length > 1 ? parts[1] : val;
+  };
 
   const { jobId: routeJobId } = useParams();
   const [searchParams] = useSearchParams();
@@ -130,7 +138,7 @@ export default function AIImages() {
     if (!assetId || !promptText) return;
     setIsRegenerating(true);
     try {
-      await api.post(`/images/${assetId}/regenerate`, null, { params: { prompt_text: promptText } });
+      await api.post(`/images/${assetId}/regenerate`, null, { params: { prompt_text: promptText, override_model: overrideModel || undefined } });
       await fetchQueue();
     } catch (err) {
       if (err.response?.status === 402 && err.response?.data?.detail?.error === 'insufficient_credits') {
@@ -553,7 +561,28 @@ export default function AIImages() {
 
           {/* Prompt Editor */}
           <div className="border-t border-slate-200 bg-white p-5 flex flex-col shrink-0 @container">
-            <div className="text-xs font-bold text-slate-400 tracking-wider mb-3">PROMPT EDITOR</div>
+            <div className="flex justify-between items-center mb-3">
+              <div className="text-xs font-bold text-slate-400 tracking-wider">PROMPT EDITOR</div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">IMAGE MODEL</span>
+                <div className="bg-white border border-slate-300 rounded-lg overflow-hidden shadow-sm">
+                  <select 
+                    className="px-3 py-1.5 bg-transparent text-[12px] font-medium text-slate-700 outline-none hover:bg-slate-50 cursor-pointer min-w-[220px]"
+                    value={overrideModel}
+                    onChange={(e) => setOverrideModel(e.target.value)}
+                    disabled={isRegenerating || isGroupGenerating || !activeVariationId}
+                    title="Select model for regeneration"
+                  >
+                    <option value="">Default Model</option>
+                    <option value="google/gemini-3-pro-image">Gemini 3 Pro Image</option>
+                    <option value="google/gemini-3.1-flash-image">Gemini 3.1 Flash Image</option>
+                    <option value="google/gemini-3.1-flash-lite-image">Gemini 3.1 Flash Lite Image</option>
+                    <option value="google/gemini-2.5-flash-image">Gemini 2.5 Flash Image</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            
             <div className="relative w-full mb-5">
               <textarea 
                 rows="5"
@@ -570,30 +599,29 @@ export default function AIImages() {
               </button>
             </div>
             
-            <div className="flex items-stretch gap-2 @2xl:gap-3 justify-end">
-              <button 
-                onClick={(e) => confirmDeleteVariation(e, activeVariationId)}
-                disabled={!activeVariationId}
-                className="flex items-center justify-center gap-2 px-3 @2xl:px-5 bg-white border border-rose-200 text-rose-600 rounded-lg font-bold text-[13px] hover:bg-rose-50 transition-colors shadow-sm disabled:opacity-50"
-                title="Remove"
-              >
-                <Trash2 size={16} /> <span className="hidden @2xl:inline">REMOVE</span>
-              </button>
-              <button 
-                onClick={() => handleRegenerate(activeVariationId)}
-                disabled={isRegenerating || isGroupGenerating || !activeVariationId}
-                className={clsx(
-                  "flex items-center justify-center gap-2.5 px-4 @2xl:px-6 py-2 bg-white border border-slate-300 text-slate-700 rounded-lg font-bold text-[13px] hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50 leading-tight tracking-wide",
-                  (isRegenerating || isGroupGenerating) && "blur-[1px] cursor-not-allowed"
-                )}
-                title="Regenerate Variation"
-              >
-                {isRegenerating || isGroupGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
-                <div className="text-left hidden @2xl:block">
-                  <div>REGENERATE</div>
-                  <div>VARIATION</div>
-                </div>
-              </button>
+            <div className="flex flex-col items-end gap-3">
+              <div className="flex items-stretch gap-2 @2xl:gap-3 justify-end w-full">
+                <button 
+                  onClick={(e) => confirmDeleteVariation(e, activeVariationId)}
+                  disabled={!activeVariationId}
+                  className="flex items-center justify-center gap-2 px-3 @2xl:px-5 bg-white border border-rose-200 text-rose-600 rounded-lg font-bold text-[13px] hover:bg-rose-50 transition-colors shadow-sm disabled:opacity-50"
+                  title="Remove"
+                >
+                  <Trash2 size={16} /> <span className="hidden @2xl:inline">REMOVE</span>
+                </button>
+                
+                <button 
+                  onClick={() => handleRegenerate(activeVariationId)}
+                  disabled={isRegenerating || isGroupGenerating || !activeVariationId}
+                  className={clsx(
+                    "flex items-center justify-center gap-2 px-3 @2xl:px-5 bg-white border border-slate-300 text-slate-700 rounded-lg font-bold text-[13px] hover:bg-slate-50 transition-colors shadow-sm disabled:opacity-50 leading-tight tracking-wide",
+                    (isRegenerating || isGroupGenerating) && "blur-[1px] cursor-not-allowed"
+                  )}
+                  title="Regenerate Variation"
+                >
+                  {isRegenerating || isGroupGenerating ? <Loader2 size={16} className="animate-spin" /> : <RefreshCcw size={16} />}
+                  <span className="hidden @2xl:inline">REGENERATE</span>
+                </button>
               <button 
                 onClick={() => handleApprove(activeVariationId)}
                 disabled={!activeVariationId}
@@ -608,6 +636,7 @@ export default function AIImages() {
               </button>
             </div>
           </div>
+        </div>
         </div>
 
 
@@ -699,35 +728,58 @@ export default function AIImages() {
           {activeVariation && (
             <div className="p-6 border-t border-slate-200 bg-white mt-auto">
               <h3 className="text-[13px] font-bold text-slate-500 uppercase tracking-wider mb-5">Asset Metadata</h3>
-              <div className="space-y-4 text-[15px]">
-                <div className="flex justify-between items-start gap-4">
-                  <span className="text-slate-500 flex-shrink-0">Product</span>
-                  <span className="font-semibold text-slate-800 text-right leading-tight">
+              <div className="space-y-4 text-[14px]">
+                <div className="flex flex-col gap-1">
+                  <span className="text-slate-500 text-xs uppercase tracking-wide">Product</span>
+                  <span className="font-semibold text-slate-800 leading-tight">
                     {activeJob?.product_name || activeJob?.task_name || 'Unknown Product'}
                   </span>
                 </div>
-                <div className="flex justify-between items-start gap-4">
-                  <span className="text-slate-500 flex-shrink-0">File</span>
-                  <span className="font-semibold text-slate-800 break-all text-right leading-tight">{activeVariation.asset_name}</span>
+                <div className="flex flex-col gap-1">
+                  <span className="text-slate-500 text-xs uppercase tracking-wide">File</span>
+                  <span className="font-semibold text-slate-800 break-all leading-tight">{activeVariation.asset_name}</span>
                 </div>
                 {activeVariation.metadata && (
                   <>
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-500">Type</span>
-                      <span className="font-semibold text-slate-800">{activeVariation.metadata.type}</span>
+                    <div className="grid grid-cols-2 gap-y-4 gap-x-4 pt-2">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-slate-500 text-xs uppercase tracking-wide">Type</span>
+                        <span className="font-semibold text-slate-800">{activeVariation.metadata.type}</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-slate-500 text-xs uppercase tracking-wide">Ratio</span>
+                        <span className="font-semibold text-slate-800">{activeVariation.metadata.ratio}</span>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <span className="text-slate-500 text-xs uppercase tracking-wide">Size</span>
+                        <span className="font-semibold text-slate-800">{activeVariation.metadata.size_kb} KB</span>
+                      </div>
+                      {activeVariation.metadata.created_on && (
+                        <div className="flex flex-col gap-1">
+                          <span className="text-slate-500 text-xs uppercase tracking-wide">Created</span>
+                          <span className="font-semibold text-slate-800">{activeVariation.metadata.created_on.split(' ')[0]}</span>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-500">Ratio</span>
-                      <span className="font-semibold text-slate-800">{activeVariation.metadata.ratio}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-slate-500">Size</span>
-                      <span className="font-semibold text-slate-800">{activeVariation.metadata.size_kb} KB</span>
-                    </div>
-                    {activeVariation.metadata.created_on && (
-                      <div className="flex justify-between items-center mt-3 pt-3 border-t border-slate-100">
-                        <span className="text-slate-500 text-xs">Created On</span>
-                        <span className="font-semibold text-slate-700 text-xs">{activeVariation.metadata.created_on}</span>
+                    
+                    {(activeVariation.metadata.text_model || activeVariation.metadata.image_model) && (
+                      <div className="flex flex-col mt-2 pt-4 border-t border-slate-100 gap-3">
+                        {activeVariation.metadata.text_model && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-slate-500 text-xs uppercase tracking-wide">Text Model</span>
+                            <span className="font-semibold text-slate-700 text-sm break-all" title={activeVariation.metadata.text_model}>
+                              {formatModel(activeVariation.metadata.text_model)}
+                            </span>
+                          </div>
+                        )}
+                        {activeVariation.metadata.image_model && (
+                          <div className="flex flex-col gap-1">
+                            <span className="text-slate-500 text-xs uppercase tracking-wide">Image Model</span>
+                            <span className="font-semibold text-slate-700 text-sm break-all" title={activeVariation.metadata.image_model}>
+                              {formatModel(activeVariation.metadata.image_model)}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </>
@@ -909,7 +961,8 @@ export default function AIImages() {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Delete Job Modal */}

@@ -83,7 +83,9 @@ def get_image_queue(active_job_id: str = None, db: Session = Depends(get_db)):
                                     "size_kb": round(os.path.getsize(i.storage_path) / 1024, 1) if os.path.exists(i.storage_path) else 0,
                                     "type": "Lifestyle" if "lifestyle" in name.lower() else "Feature" if "feature" in name.lower() else "Banner (A+)",
                                     "ratio": "1:1",
-                                    "created_on": i.created_at.strftime("%b %d, %Y %H:%M") if i.created_at else "Unknown"
+                                    "created_on": i.created_at.strftime("%b %d, %Y %H:%M") if i.created_at else "Unknown",
+                                    "text_model": i.text_model,
+                                    "image_model": i.image_model
                                 }
                         } for i in items
                     ]
@@ -93,7 +95,7 @@ def get_image_queue(active_job_id: str = None, db: Session = Depends(get_db)):
     return queue
 
 @router.post("/{asset_id}/regenerate", summary="Regenerate an image variation")
-def regenerate_asset(asset_id: str, prompt_text: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def regenerate_asset(asset_id: str, prompt_text: str, override_model: str = None, background_tasks: BackgroundTasks = None, db: Session = Depends(get_db)):
     local_asset = db.query(ImageAsset).filter(ImageAsset.id == asset_id).first()
     if not local_asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -146,6 +148,11 @@ def regenerate_asset(asset_id: str, prompt_text: str, background_tasks: Backgrou
     
     save_path = os.path.join(folder, new_asset_name)
     
+    # Fetch default text/image models if not overridden
+    from app.config_loader import get_dynamic_env
+    text_model = local_asset.text_model or get_dynamic_env("SCRAPING_MODEL") or "unknown-text-model"
+    image_model_val = override_model if override_model else (local_asset.image_model or get_dynamic_env("IMAGE_GENERATION_MODEL") or "unknown-image-model")
+    
     # Insert the new asset immediately with status="generating"
     new_asset = ImageAsset(
         scrape_task_id=local_asset.scrape_task_id,
@@ -153,7 +160,9 @@ def regenerate_asset(asset_id: str, prompt_text: str, background_tasks: Backgrou
         storage_path=save_path,
         prompt_text=prompt_text,
         variation_group=local_asset.variation_group,
-        status="generating"
+        status="generating",
+        text_model=text_model,
+        image_model=image_model_val
     )
     db.add(new_asset)
     db.commit()
@@ -163,7 +172,7 @@ def regenerate_asset(asset_id: str, prompt_text: str, background_tasks: Backgrou
     
     # Use Celery strictly
     from app.tasks.gen_images import regenerate_asset_task
-    regenerate_asset_task.delay(new_asset_id, str(local_asset.id))
+    regenerate_asset_task.delay(new_asset_id, str(local_asset.id), override_model)
         
     response = {"status": "success", "message": "Regenerating..."}
     if variant_check["status"] == "warn":
@@ -408,6 +417,8 @@ def finish_review(job_id: str, db: Session = Depends(get_db)):
     # Check if ExtractedProduct exists
     from app.models.extracted_product import ExtractedProduct
     from app.models.generated_page import GeneratedPage
+    
+    prod = job.product_data or {}
     
     extracted = db.query(ExtractedProduct).filter(ExtractedProduct.scrape_task_id == job.id).first()
     if not extracted:
