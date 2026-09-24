@@ -30,6 +30,7 @@ CONTENT GENERATION RULES
 - about_this_item: Array of 3-6 strings (bullet points).
 - Product Highlights: Array of objects {"title": "2-4 words", "description": "1-2 sentences visual benefit"}.
 - Feature Data: Array of objects {"label": "Key", "value": "Value"}.
+- Specification Data: MUST BE A DICTIONARY (key-value pairs) matching EXACTLY the category keys. Do NOT omit any keys from the category rules.
 - faqs: Array of objects {"question": "...", "answer": "..."}. You MUST generate a minimum of 5 FAQs.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━

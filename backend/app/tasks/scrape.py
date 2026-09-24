@@ -541,13 +541,13 @@ def process_scrape(self, task_id: str):
                 if category_override:
                     matching = next((c for c in category_specs if c.category_name.lower() == category_override.lower()), None)
                     if matching:
-                        rules += f"3. The user has MANUALLY FORCED the category to '{matching.category_name}'. STRICT ENFORCEMENT: You MUST include EVERY SINGLE ONE of these specification keys in your output: {json.dumps(matching.specifications)}. Do NOT invent new keys. Do NOT omit any keys. If data is missing, set the value to an empty string \"\".\n"
+                        rules += f"3. The user has MANUALLY FORCED the category to '{matching.category_name}'. STRICT ENFORCEMENT: The \"Specification Data\" dictionary MUST contain EXACTLY these keys: {json.dumps(matching.specifications)}. Do NOT omit ANY of these keys. If you cannot find data for a key, you MUST still output the key with an empty string (\"\") as the value.\n"
                     else:
                         rules += f"3. The user tried to force category '{category_override}' but it was not found. Try your best to match the product.\n"
                 else:
-                    rules += "3. Identify which single category above BEST MATCHES this product. STRICT ENFORCEMENT: You MUST strictly limit the `specification_data` dictionary to ONLY the exact keys for that category. You MUST include ALL keys from that category, no exceptions. If data is missing for a key, set its value to an empty string \"\". Do not invent new keys.\n"
+                    rules += "3. Identify which single category above BEST MATCHES this product. STRICT ENFORCEMENT: The \"Specification Data\" dictionary MUST contain EXACTLY all the keys listed for that matched category. Do NOT omit ANY keys. If you cannot find data for a key, you MUST still output the key with an empty string (\"\") as the value. Do not invent new keys.\n"
                     rules += "4. If you cannot confidently match the product to ANY of the listed categories above, you MUST output a JSON object with ONLY this field: {\"category_error\": \"No matching category found\"} and nothing else.\n"
-                    rules += "5. Any other specifications you find that are not in the matched category's allowed list MUST be placed in the `feature_data` array instead.\n"
+                    rules += "5. Any other specifications you find that are not in the matched category's allowed list MUST be placed in the `Feature Data` array instead.\n"
                 system_prompt_text += "\n\n" + rules
             # --- PHASE B: AI ENRICHMENT ---
             task.append_activity("ai_processing", "Finalizing JSON with AI agent using combined context")
@@ -583,7 +583,7 @@ def process_scrape(self, task_id: str):
                         {"role": "user", "content": prompt2}
                     ],
                     api_key=openrouter_key,
-                    max_tokens=4000,
+                    max_tokens=8192,
                     temperature=0.15,
                     response_format={"type": "json_object"}
                 )
