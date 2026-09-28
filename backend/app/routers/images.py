@@ -80,7 +80,7 @@ def get_image_queue(active_job_id: str = None, db: Session = Depends(get_db)):
                             "asset_name": i.asset_name,
                             "prompt": i.prompt_text,
                                 "metadata": {
-                                    "size_kb": round(os.path.getsize(i.storage_path) / 1024, 1) if os.path.exists(i.storage_path) else 0,
+                                    "size_kb": round(os.path.getsize(i.storage_path) / 1024, 1) if i.storage_path and os.path.exists(i.storage_path) else 0,
                                     "type": "Lifestyle" if "lifestyle" in name.lower() else "Feature" if "feature" in name.lower() else "Banner (A+)",
                                     "ratio": "1:1",
                                     "created_on": i.created_at.strftime("%b %d, %Y %H:%M") if i.created_at else "Unknown",
