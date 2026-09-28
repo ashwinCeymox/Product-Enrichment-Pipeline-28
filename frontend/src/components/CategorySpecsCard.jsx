@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Trash2, Save, X, Edit2, Check } from "lucide-react";
+import { Plus, Trash2, Save, X, Edit2, Check, CheckCircle2, XCircle } from "lucide-react";
 import api from "../api/client";
 
 export default function CategorySpecsCard() {
@@ -7,6 +7,15 @@ export default function CategorySpecsCard() {
   const [isEditing, setIsEditing] = useState(null);
   const [editForm, setEditForm] = useState({ category_name: "", specifications: [] });
   const [loading, setLoading] = useState(true);
+  const [toastMessage, setToastMessage] = useState(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [toastType, setToastType] = useState('success');
+
+  const showToast = (msg, type = 'success') => {
+    setToastMessage(msg);
+    setToastType(type);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
 
   useEffect(() => {
     fetchCategories();
@@ -28,7 +37,7 @@ export default function CategorySpecsCard() {
       // Filter out empty specs
       const cleanedSpecs = editForm.specifications.filter(s => s.trim() !== "");
       if (!editForm.category_name.trim()) {
-        alert("Category name is required");
+        showToast("Category name is required", "error");
         return;
       }
       
@@ -38,19 +47,24 @@ export default function CategorySpecsCard() {
       });
       setIsEditing(null);
       fetchCategories();
+      showToast("Category spec saved successfully");
     } catch (err) {
       console.error(err);
-      alert("Failed to save category spec");
+      showToast("Failed to save category spec", "error");
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this categorys specifications?")) return;
+  const confirmDelete = async () => {
+    if (!deleteConfirmId) return;
     try {
-      await api.delete(`/settings/category-specs/${id}`);
+      await api.delete(`/settings/category-specs/${deleteConfirmId}`);
       fetchCategories();
+      showToast("Deleted successfully");
     } catch (err) {
       console.error(err);
+      showToast("Failed to delete", "error");
+    } finally {
+      setDeleteConfirmId(null);
     }
   };
 
@@ -80,12 +94,23 @@ export default function CategorySpecsCard() {
   };
 
   return (
-    <div className="mt-8">
+    <div className="mt-8 relative">
       <div className="flex items-center gap-2 text-slate-800 font-bold mb-4">
         <Check size={18} className="text-[#3626A7]" />
         <h2>Category-Based Specifications</h2>
       </div>
       
+      {toastMessage && (
+        <div className="fixed bottom-4 right-4 bg-slate-800 text-white px-4 py-2 rounded shadow-lg flex items-center gap-2 z-50 animate-fade-in-up">
+          {toastType === 'success' ? (
+            <CheckCircle2 size={16} className="text-emerald-400" />
+          ) : (
+            <XCircle size={16} className="text-rose-400" />
+          )}
+          {toastMessage}
+        </div>
+      )}
+
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
         <div className="p-5 flex justify-between items-center border-b border-slate-100">
           <div>
@@ -175,7 +200,7 @@ export default function CategorySpecsCard() {
                     <h4 className="font-bold text-slate-800 text-[14px]">{cat.category_name}</h4>
                     <div className="flex gap-1">
                       <button onClick={() => openEditForm(cat)} className="p-1 text-slate-400 hover:text-blue-600"><Edit2 size={14}/></button>
-                      <button onClick={() => handleDelete(cat.id)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 size={14}/></button>
+                      <button onClick={() => setDeleteConfirmId(cat.id)} className="p-1 text-slate-400 hover:text-rose-600"><Trash2 size={14}/></button>
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
@@ -194,3 +219,4 @@ export default function CategorySpecsCard() {
     </div>
   );
 }
+

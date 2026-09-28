@@ -35,6 +35,7 @@ class ScrapeTask(Base):
     url = Column(String, nullable=False)
     product_type = Column(String, default="simple")
     category_override = Column(String, nullable=True)  # Manual category override set by user on reschedule
+    reference_urls = Column(JSON, nullable=True)  # List of URLs to bypass phase 2 search
     status = Column(String, nullable=False, default="pending", index=True)
     # Status values: pending, queued, processing, scraping, ai_processing,
     #                waiting_for_approval, success, failed

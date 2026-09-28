@@ -29,6 +29,7 @@ export default function ContentPreview() {
   
   // Toast State
   const [toastMessage, setToastMessage] = useState(null);
+  const [itemToRemove, setItemToRemove] = useState(null);
 
   // Accordion state: keep track of which main JSON keys are expanded. 
   // Undefined means "expanded by default".
@@ -334,7 +335,7 @@ export default function ContentPreview() {
       await api.post(`/jobs/${jobId}/update_data`, { product_data: JSON.parse(jsonData) });
     } catch (e) {
       console.error(e);
-      alert("Failed to save changes.");
+      showToast("Failed to save changes.", "error");
     } finally {
       setSaving(false);
     }
@@ -359,7 +360,7 @@ export default function ContentPreview() {
       // Sending an empty object so it doesn't overwrite the images just injected by /finish
       await api.post(`/jobs/${jobId}/finalize`, {});
       
-      alert('Bundle Finalized and Saved successfully! It has been moved to the Downloads tab.');
+      showToast('Bundle Finalized and Saved successfully! It has been moved to the Downloads tab.');
       
       // Invalidate local cache/buffer
       setJob(null);
@@ -374,7 +375,7 @@ export default function ContentPreview() {
       }
     } catch (e) {
       console.error(e);
-      alert("Failed to finalize bundle.");
+      showToast("Failed to finalize bundle.", "error");
     } finally {
       setSaving(false);
     }
@@ -393,24 +394,24 @@ export default function ContentPreview() {
       navigate(`/task-logs/ai-images/${jobId}?taskName=${encodeURIComponent(taskName)}`);
     } catch (e) {
       console.error(e);
-      alert("Failed to start AI image generation.");
+      showToast("Failed to start AI image generation.", "error");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleRemoveBundle = async () => {
-    if (!window.confirm("Are you sure you want to remove this bundle?")) return;
+  const confirmRemoveItem = async () => {
+    if (!itemToRemove) return;
     setSaving(true);
     try {
-      await api.delete(`/jobs/${jobId}`);
+      await api.delete(`/jobs/${itemToRemove}`);
       
       // Invalidate local cache/buffer
       setJob(null);
       setJsonData('');
       setRealAssets([]);
       
-      const activeBundles = bundles.filter(b => b.id !== jobId && !['completed', 'aborted', 'failed', 'removed'].includes(b.status));
+      const activeBundles = bundles.filter(b => b.id !== itemToRemove && !['completed', 'aborted', 'failed', 'removed'].includes(b.status));
       if (activeBundles.length > 0) {
         navigate(`/task-logs/content-preview/${activeBundles[0].id}?taskName=${encodeURIComponent(taskName)}&tab=${activeTab}`);
       } else {
@@ -418,9 +419,10 @@ export default function ContentPreview() {
       }
     } catch (e) {
       console.error(e);
-      alert("Failed to remove.");
+      showToast("Failed to remove.", "error");
     } finally {
       setSaving(false);
+      setItemToRemove(null);
     }
   };
 
@@ -506,7 +508,7 @@ export default function ContentPreview() {
                 FINALIZE AND SAVE
               </button>
               <button
-                onClick={handleRemoveBundle}
+                onClick={() => setItemToRemove(jobId)}
                 disabled={saving}
                 className="w-full py-2 px-3 bg-rose-50 text-rose-600 border border-rose-200 rounded-md text-xs font-semibold hover:bg-rose-100 transition-colors flex justify-center items-center gap-2 mt-2"
               >
@@ -1003,6 +1005,37 @@ export default function ContentPreview() {
         document.body
       )}
     </div>
+
+      {/* Remove Bundle Modal */}
+      {itemToRemove && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-start gap-4 mb-6">
+              <div className="w-10 h-10 bg-rose-50 rounded-full flex items-center justify-center border border-rose-100 shrink-0">
+                <Trash2 className="text-rose-600" size={20} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Remove Bundle</h3>
+                <p className="text-sm text-slate-500 mt-1">Are you sure you want to remove this bundle? This action cannot be undone.</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setItemToRemove(null)}
+                className="flex-1 py-2.5 rounded-xl text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmRemoveItem}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl transition-colors shadow-sm"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

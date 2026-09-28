@@ -40,6 +40,27 @@ from app.schemas.jobs import (
 from app.dependencies import get_current_user
 from app.models.user import User
 
+from pydantic import BaseModel
+import httpx
+import json
+from urllib.parse import urlparse
+
+class SearchUrlsRequest(BaseModel):
+    query: str
+    country: str = "us"
+
+class SearchResultItem(BaseModel):
+    title: str
+    url: str
+    snippet: str
+    domain: str
+    position: int
+
+class SearchUrlsResponse(BaseModel):
+    results: List[SearchResultItem]
+    total: int
+
+
 router = APIRouter(
     prefix="/jobs", 
     tags=["Jobs"],
@@ -80,7 +101,7 @@ def _validate_urls(raw: List[str]) -> tuple[List[str], List[str]]:
 def _build_jobs(
     db: Session,
     *,
-    urls: List[str],
+    jobs_to_create: List[dict],
     priority: Optional[str],
     task_name: str,
     scheduled_date: Optional[date],
@@ -94,12 +115,13 @@ def _build_jobs(
     batch_id = str(uuid.uuid4())
     jobs: List[ScrapeTask] = []
 
-    for url in urls:
+    for item in jobs_to_create:
         job = ScrapeTask(
             batch_id=batch_id,
             task_name=task_name,
             priority=priority or "low",
-            url=url,
+            url=item["url"],
+            reference_urls=item.get("reference_urls"),
             product_type=product_type,
             status="pending",
             progress=0,
@@ -107,7 +129,7 @@ def _build_jobs(
             created_by=created_by,
             generate_ai_images=generate_ai_images,
             text_model_override=text_model_override,
-            activity_log=[{"timestamp": time.time(), "action": "created", "detail": f"Job created for {url}"}],
+            activity_log=[{"timestamp": time.time(), "action": "created", "detail": f"Job created for {item['url']}"}],
         )
         db.add(job)
         jobs.append(job)
@@ -165,7 +187,19 @@ def create_job(
     db: Session = Depends(get_db),
 ):
     _check_credentials()
-    valid_urls = [str(u) for u in payload.urls]
+    jobs_list = []
+    valid_urls = []
+    if payload.urls:
+        valid_urls = [str(u) for u in payload.urls]
+        for u in payload.urls:
+            jobs_list.append({"url": str(u), "reference_urls": None})
+    elif payload.primary_url:
+        valid_urls = [str(payload.primary_url)]
+        ref_urls = [str(r) for r in payload.reference_urls] if payload.reference_urls else []
+        jobs_list.append({"url": str(payload.primary_url), "reference_urls": ref_urls})
+    
+    if not jobs_list:
+        raise HTTPException(status_code=400, detail="Must provide urls or primary_url")
     
 
 
@@ -190,7 +224,7 @@ def create_job(
     
     batch_id, jobs = _build_jobs(
         db,
-        urls=valid_urls,
+        jobs_to_create=jobs_list,
         task_name=payload.task_name,
         priority=payload.priority,
         scheduled_date=payload.scheduled_date,
@@ -285,7 +319,7 @@ async def upload_csv(
 
     batch_id, jobs = _build_jobs(
         db,
-        urls=valid_urls,
+        jobs_to_create=jobs_list,
         task_name=task_name,
         priority=priority,
         scheduled_date=scheduled_date,
@@ -542,7 +576,7 @@ def reschedule_job(
     # 4. Create new job with same properties (simulating frontend post call from PRO-ACTIVE-FITNESS)
     batch_id, jobs = _build_jobs(
         db,
-        urls=valid_urls,
+        jobs_to_create=jobs_list,
         task_name=task_name,
         priority=priority,
         scheduled_date=payload.scheduled_date if payload else None,
@@ -603,6 +637,52 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
     db.delete(job)
     db.commit()
     return {"status": "success", "message": "Job deleted completely"}
+
+
+@router.delete("/task/{task_name}", summary="Abort all jobs for a specific task group")
+def delete_task_group(task_name: str, db: Session = Depends(get_db)):
+    jobs = db.query(ScrapeTask).filter(ScrapeTask.task_name == task_name).all()
+    if not jobs:
+        raise HTTPException(status_code=404, detail="No jobs found for this task name")
+        
+    import shutil
+    import os
+    from app.tasks.tools.image_generator import _safe_folder_name
+    from app.models.image_asset import ImageAsset
+    
+    deleted_count = 0
+    IMAGE_OUTPUT_DIR = os.getenv("IMAGE_OUTPUT_DIR", "output/images")
+    
+    for job in jobs:
+        # Cleanup images folder
+        sku = job.task_name
+        if job.product_data:
+            sku = job.product_data.get("product_identity", {}).get("sku", job.task_name)
+            
+        full_sku = f"{sku}_{job.id}"
+        safe_sku = _safe_folder_name(full_sku)
+        folder_to_delete = os.path.join(IMAGE_OUTPUT_DIR, safe_sku)
+        
+        if os.path.exists(folder_to_delete):
+            try:
+                shutil.rmtree(folder_to_delete)
+            except Exception:
+                pass
+                
+        # Cleanup reference cache folder
+        reference_cache_dir = os.path.join("output/reference_cache", str(job.id))
+        if os.path.exists(reference_cache_dir):
+            try:
+                shutil.rmtree(reference_cache_dir)
+            except Exception:
+                pass
+        
+        db.query(ImageAsset).filter(ImageAsset.scrape_task_id == job.id).delete()
+        db.delete(job)
+        deleted_count += 1
+        
+    db.commit()
+    return {"status": "success", "message": f"Deleted {deleted_count} jobs completely"}
 
 
 import zipfile
@@ -850,3 +930,53 @@ def get_task_statuses(db: Session = Depends(get_db)):
         )
         for t in tasks
     ]
+
+
+@router.post("/search-urls", response_model=SearchUrlsResponse, summary="Search Serper for candidate URLs")
+def search_urls(payload: SearchUrlsRequest, current_user: User = Depends(get_current_user)):
+    from app.config_loader import get_dynamic_env
+    serper_key = get_dynamic_env("SERPER_API_KEY")
+    if not serper_key:
+        raise HTTPException(status_code=500, detail="SERPER_API_KEY is not configured.")
+
+    try:
+        serper_resp = httpx.post(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": serper_key, "Content-Type": "application/json"},
+            json={"q": payload.query, "gl": payload.country.lower(), "num": 20}
+        )
+        serper_resp.raise_for_status()
+        organic_results = serper_resp.json().get("organic", [])
+        
+        seen_domains = set()
+        seen_urls = set()
+        final_results = []
+        
+        for item in organic_results:
+            link = item.get("link", "")
+            if not link or link in seen_urls:
+                continue
+            
+            try:
+                domain = urlparse(link).netloc.lower()
+                if domain.startswith("www."):
+                    domain = domain[4:]
+            except:
+                domain = link
+                
+            seen_urls.add(link)
+            
+            final_results.append(SearchResultItem(
+                title=item.get("title", ""),
+                url=link,
+                snippet=item.get("snippet", ""),
+                domain=domain,
+                position=len(final_results) + 1
+            ))
+            
+            if len(final_results) >= 10:
+                break
+                
+        return SearchUrlsResponse(results=final_results, total=len(final_results))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

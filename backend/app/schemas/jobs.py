@@ -54,7 +54,9 @@ class SingleURLRequest(_SubmitBase):
 
 
 class MultiURLRequest(_SubmitBase):
-    urls: List[HttpUrl] = Field(..., min_length=1, max_length=500)
+    urls: Optional[List[HttpUrl]] = None
+    primary_url: Optional[HttpUrl] = None
+    reference_urls: Optional[List[HttpUrl]] = None
 
     @field_validator("urls")
     @classmethod

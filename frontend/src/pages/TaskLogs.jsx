@@ -29,6 +29,7 @@ export default function TaskLogs() {
   
   // Toast State
   const [toastMessage, setToastMessage] = useState(null);
+  const [groupToAbort, setGroupToAbort] = useState(null);
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -38,9 +39,8 @@ export default function TaskLogs() {
     if (isManualRefresh === true) setIsRefreshing(true);
     try {
       // Fetching individual jobs and grouping them by task_name
-      // Filter out completed and success tasks so they disappear from the active logs list
       const res = await api.get('/dashboard/recent-activity?limit=100');
-      const jobs = (res.data.items || []).filter(job => !['completed', 'success'].includes(job.status));
+      const jobs = res.data.items || [];
       
       const grouped = {};
       jobs.forEach(job => {
@@ -146,6 +146,19 @@ export default function TaskLogs() {
     setExpandedTasks(newExpanded);
   };
 
+  const confirmAbortGroup = async () => {
+    if (!groupToAbort) return;
+    try {
+      await api.delete(`/jobs/task/${encodeURIComponent(groupToAbort)}`);
+      setToastMessage(`Group ${groupToAbort} aborted`);
+      fetchTasks();
+    } catch (err) {
+      showToast("Failed to abort group.", "error");
+    } finally {
+      setGroupToAbort(null);
+    }
+  };
+
   const handleAbortConfirm = async () => {
     if (!jobToAbort) return;
     setIsAborting(true);
@@ -154,7 +167,7 @@ export default function TaskLogs() {
       setJobToAbort(null);
       fetchTasks();
     } catch (err) {
-      alert("Failed to abort task.");
+      showToast("Failed to abort task.", "error");
     } finally {
       setIsAborting(false);
     }
@@ -170,7 +183,7 @@ export default function TaskLogs() {
   const handleRescheduleSubmit = async () => {
     if (!rescheduleTask) return;
     if (rescheduleType === 'later' && !rescheduleDate) {
-      alert("Please select a date to schedule.");
+      showToast("Please select a date to schedule.", "error");
       return;
     }
     
@@ -186,7 +199,7 @@ export default function TaskLogs() {
       setRescheduleTask(null);
       setRescheduleCategory('');
     } catch (error) {
-      alert("Failed to reschedule job.");
+      showToast("Failed to reschedule job.", "error");
     } finally {
       setRescheduleLoading(false);
       setReschedulingJob(null);
@@ -450,6 +463,16 @@ export default function TaskLogs() {
                       )}></div>
                       {task.status === 'completed' ? 'Completed' : 'Processing'}
                     </div>
+                    
+                    {/* Abort Group Button */}
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); setGroupToAbort(task.task_name); }}
+                      className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-md transition-colors"
+                      title="Abort entire task group"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+
                     <svg
                       className={clsx("w-5 h-5 text-slate-400 transition-transform", isExpanded && "rotate-180")}
                       fill="none" viewBox="0 0 24 24" stroke="currentColor"
@@ -734,6 +757,37 @@ export default function TaskLogs() {
         <div className="fixed top-5 left-1/2 z-50 bg-slate-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-medium flex items-center gap-2 toast-animate">
           <CheckCircle2 size={16} className="text-emerald-400" />
           {toastMessage}
+        </div>
+      )}
+
+      {/* Abort Group Modal */}
+      {groupToAbort && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-start gap-4 mb-6">
+              <div className="w-10 h-10 bg-rose-50 rounded-full flex items-center justify-center border border-rose-100 shrink-0">
+                <Trash2 className="text-rose-600" size={20} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Abort Group</h3>
+                <p className="text-sm text-slate-500 mt-1">Are you sure you want to permanently abort and delete all jobs under <strong>{groupToAbort}</strong>? This action cannot be undone.</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setGroupToAbort(null)}
+                className="flex-1 py-2.5 rounded-xl text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmAbortGroup}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl transition-colors shadow-sm"
+              >
+                Abort All
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

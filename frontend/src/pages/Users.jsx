@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
-import { MoreVertical, UserPlus, Filter, Search, X, AlertTriangle } from 'lucide-react';
+import { MoreVertical, UserPlus, Filter, Search, X, AlertTriangle, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
 import { UsersTableSkeleton } from '../components/Shimmer';
 
 export default function Users() {
@@ -21,6 +21,15 @@ export default function Users() {
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
+  const [toastMessage, setToastMessage] = useState(null);
+  const [userToRemove, setUserToRemove] = useState(null);
+  const [toastType, setToastType] = useState('success');
+
+  const showToast = (msg, type = 'success') => {
+    setToastMessage(msg);
+    setToastType(type);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
 
   const fetchUsers = async () => {
     try {
@@ -55,14 +64,16 @@ export default function Users() {
     }
   };
 
-  const handleRemoveUser = async (userId) => {
-    if (!window.confirm("Are you sure you want to remove this user? This action will immediately end their session and lock them out.")) return;
-    
+  const confirmRemoveUser = async () => {
+    if (!userToRemove) return;
     try {
-      await api.post(`/users/${userId}/remove`);
+      await api.post(`/users/${userToRemove}/remove`);
+      showToast('User removed successfully');
       fetchUsers();
     } catch (err) {
-      alert(err.response?.data?.detail || 'Failed to remove user');
+      showToast(err.response?.data?.detail || 'Failed to remove user', 'error');
+    } finally {
+      setUserToRemove(null);
     }
   };
 
@@ -213,7 +224,7 @@ export default function Users() {
                           <div className="absolute right-0 mt-0 w-36 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 invisible group-hover/dropdown:visible opacity-0 group-hover/dropdown:opacity-100 transition-all z-10 border border-slate-100">
                             <div className="py-1">
                               <button 
-                                onClick={() => handleRemoveUser(u.id)}
+                                onClick={() => setUserToRemove(u.id)}
                                 className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
                               >
                                 Remove User
@@ -323,6 +334,37 @@ export default function Users() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Remove User Modal */}
+      {userToRemove && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-start gap-4 mb-6">
+              <div className="w-10 h-10 bg-rose-50 rounded-full flex items-center justify-center border border-rose-100 shrink-0">
+                <Trash2 className="text-rose-600" size={20} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Remove User</h3>
+                <p className="text-sm text-slate-500 mt-1">Are you sure you want to remove this user? This action will immediately end their session and lock them out.</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setUserToRemove(null)}
+                className="flex-1 py-2.5 rounded-xl text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmRemoveUser}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl transition-colors shadow-sm"
+              >
+                Remove
+              </button>
+            </div>
           </div>
         </div>
       )}

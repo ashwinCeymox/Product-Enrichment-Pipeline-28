@@ -75,6 +75,7 @@ def get_task_stage_and_status(status: str):
 def get_recent_activity(limit: int = 20, db: Session = Depends(get_db)):
     tasks = (
         db.query(ScrapeTask)
+        .filter(ScrapeTask.status.not_in(['completed', 'success', 'removed', 'aborted', 'failed']))
         .order_by(ScrapeTask.created_at.desc())
         .limit(limit)
         .all()

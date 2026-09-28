@@ -50,7 +50,7 @@ export default function Downloads() {
       
     } catch (err) {
       console.error(err);
-      alert('Failed to download bundle. The zip file may not exist.');
+      showToast('Failed to download bundle. The zip file may not exist.', 'error');
     } finally {
       setDownloadingId(null);
     }

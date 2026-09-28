@@ -18,19 +18,15 @@ def extract_all_images(html_content, base_url, soup=None):
         
     site_images = []
     seen_urls = set()
-    seen_base_identities = set()
-
-    def get_base_identity(url):
-        # Extracts path and strips sizing suffixes like _75, _1600, -300x300, _300x300px
-        path = urlparse(url).path
-        path = re.sub(r'(_|-)\d{2,4}(x\d{2,4})?(px)?(\.[a-zA-Z0-9]+)$', r'\4', path, flags=re.IGNORECASE)
-        return path
 
     def add_image(src, alt=""):
         if not src:
             return
         if ',' in src and ' ' in src:
-            src = src.split(',')[0].strip().split(' ')[0]
+            # Taking the LAST element in a srcset usually yields the highest resolution image
+            # e.g., "img.jpg 300w, img-large.jpg 1000w" -> "img-large.jpg"
+            src = src.split(',')[-1].strip().split(' ')[0]
+            
         if src.startswith('data:'):
             return
         abs_src = urljoin(base_url, src)
@@ -43,12 +39,7 @@ def extract_all_images(html_content, base_url, soup=None):
         if abs_src in seen_urls:
             return
             
-        base_id = get_base_identity(abs_src)
-        if base_id in seen_base_identities:
-            return # Skip size variant of an already seen image
-            
         seen_urls.add(abs_src)
-        seen_base_identities.add(base_id)
         
         img_str = f"Image: {abs_src} | Alt: {alt}"
         site_images.append(img_str)
@@ -374,6 +365,7 @@ def process_scrape(self, task_id: str):
             # --- PHASE 3: Serper + DeepSeek URL Validation Gate + MCP Competitor Scrape ---
             serper_data = ""
             competitor_htmls = []
+            urls_to_fetch = []
 
             # Domains that are always blocked from competitor scraping
             BLOCKED_DOMAINS = {
@@ -391,13 +383,19 @@ def process_scrape(self, task_id: str):
 
             input_domain = get_domain(str(task.url))
 
-            if serper_key and serper_key.strip() and product_name:
+            
+            if getattr(task, 'reference_urls', None) and isinstance(task.reference_urls, list) and len(task.reference_urls) > 0:
+                urls_to_fetch = task.reference_urls
+                task.append_activity("scraping", f"Using {len(urls_to_fetch)} manual reference URLs (bypassing Serper competitor search)")
+                db.commit()
+            elif serper_key and serper_key.strip() and product_name:
                 pi = source_data.get("product_identity", {})
                 sku = pi.get("sku", "") or pi.get("product_sku", "") or ""
                 model = pi.get("model", "") or ""
                 upc = pi.get("upc", "") or ""
+                brand = pi.get("brand", "") or ""
 
-                identifiers = " ".join([i for i in [sku, model, upc] if str(i).strip()])
+                identifiers = " ".join([i for i in [sku, model, upc, brand] if str(i).strip()])
                 search_query = f"{product_name} {identifiers} specifications details".replace("  ", " ").strip()
                 task.append_activity("ai_processing", f"Querying Serper for '{search_query}'")
                 db.commit()
@@ -430,7 +428,6 @@ def process_scrape(self, task_id: str):
                     db.commit()
 
                     # Sub-step 3C: DeepSeek URL Validation Gate
-                    urls_to_fetch = []
                     if pre_filtered and openrouter_key:
                         candidates_text = "\n".join([
                             f"{i+1}. URL: {item['link']}\n   Snippet: {item.get('snippet', 'No snippet')}"
@@ -438,14 +435,16 @@ def process_scrape(self, task_id: str):
                         ])
                         validation_prompt = (
                             f"Product we are enriching:\n"
+                            f"  Brand: {brand}\n"
                             f"  Name: {product_name}\n"
                             f"  Model: {model}\n"
                             f"  SKU: {sku}\n\n"
-                            f"Candidate competitor URLs from Google Search:\n{candidates_text}\n\n"
+                            f"Candidate competitor URLs from Google Search (Preserving Serper Sort Order):\n{candidates_text}\n\n"
                             f"Task: Review each URL's snippet and return ONLY the URLs that are "
-                            f"definitely for the EXACT SAME product (same model or SKU). "
-                            f"Reject any URL that is for a different product, a category page, "
-                            f"a brand page, or has no product-specific snippet. "
+                            f"definitely for the EXACT SAME product (matching Brand, Model, or SKU). "
+                            f"CRITICAL: Give high priority to the search engine's original sorting order—candidates higher in the list (e.g. 1, 2) are typically the most relevant. "
+                            f"Reject any URL that is for a different product/brand, a generic category page, "
+                            f"a brand homepage, or has no product-specific snippet. "
                             f"Select a maximum of 3 best matching URLs. "
                             f'Return ONLY valid JSON in this format: {{"valid_urls": ["url1", "url2"]}}'
                         )
@@ -455,7 +454,7 @@ def process_scrape(self, task_id: str):
                             val_resp = completion(
                                 model=f"openrouter/{actual_val_model}",
                                 messages=[
-                                    {"role": "system", "content": "You are a strict product URL validator.\n\nRULES:\n1. Your ONLY job is to filter a list of URLs.\n2. Output ONLY raw JSON. No markdown fences.\n3. Format MUST be exactly: {\"valid_urls\": [\"url1\", \"url2\"]}"},
+                                    {"role": "system", "content": "You are a strict product URL validator.\n\nRULES:\n1. Your ONLY job is to filter a list of URLs.\n2. Focus closely on matching the BRAND NAME and product identifiers.\n3. Respect the provided sort order (item 1 is most relevant).\n4. Output ONLY raw JSON. No markdown fences.\n5. Format MUST be exactly: {\"valid_urls\": [\"url1\", \"url2\"]}"},
                                     {"role": "user", "content": validation_prompt}
                                 ],
                                 api_key=openrouter_key,
@@ -475,48 +474,47 @@ def process_scrape(self, task_id: str):
                         urls_to_fetch = [item["link"] for item in pre_filtered[:3]]
 
                     db.commit()
-
-                    # Sub-step 3D: MCP scrape only the validated URLs
-                    if urls_to_fetch:
-                        task.append_activity("scraping", f"Fetching {len(urls_to_fetch)} validated competitor URLs via Steel MCP")
-                        db.commit()
-
-                        import concurrent.futures
-                        def fetch_bb(u):
-                            try:
-                                c = fetch_via_steel_mcp(u)
-                                if not c:
-                                    return (f"--- Competitor URL: {u} ---\nContent: Empty response from Steel MCP.", [], None)
-                                
-                                from app.tasks.structured_extraction import build_product_json
-                                comp_json = build_product_json(c, u)
-                                
-                                s = BeautifulSoup(c, "html.parser")
-                                for el in s(["script", "style", "svg", "noscript", "header", "footer", "nav"]):
-                                    el.extract()
-                                c_imgs = extract_all_images(c, u, s)
-                                
-                                return (f"--- Competitor URL: {u} ---\nSTRUCTURED JSON-LD DATA:\n{comp_json.model_dump_json(indent=2)}\n\nVISIBLE TEXT:\n{s.get_text(separator=' ', strip=True)}", c_imgs, u)
-                            except Exception as ex:
-                                return (f"--- Competitor URL: {u} ---\nContent: Failed to fetch ({ex})", [], None)
-
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                            results = list(executor.map(fetch_bb, urls_to_fetch))
-                            for text, c_imgs, u in results:
-                                competitor_htmls.append(text)
-                                if u:
-                                    visited_urls.append(u)
-                                for img_str in c_imgs:
-                                    if img_str not in seen:
-                                        seen.add(img_str)
-                                        unique_images.append(img_str)
-
-                        images_context = "\n".join(unique_images)
-                        task.append_activity("scraping", f"Total unique images after competitors: {len(unique_images)}")
-                        db.commit()
-
                 except Exception as se:
-                    print(f"Serper/Validation/MCP error: {se}")
+                    print(f"Serper/Validation error: {se}")
+
+            # Sub-step 3D: MCP scrape only the validated/manual URLs
+            if urls_to_fetch:
+                task.append_activity("scraping", f"Fetching {len(urls_to_fetch)} competitor/reference URLs via Steel MCP")
+                db.commit()
+
+                import concurrent.futures
+                def fetch_bb(u):
+                    try:
+                        c = fetch_via_steel_mcp(u)
+                        if not c:
+                            return (f"--- Competitor URL: {u} ---\nContent: Empty response from Steel MCP.", [], None)
+                        
+                        from app.tasks.structured_extraction import build_product_json
+                        comp_json = build_product_json(c, u)
+                        
+                        s = BeautifulSoup(c, "html.parser")
+                        for el in s(["script", "style", "svg", "noscript", "header", "footer", "nav"]):
+                            el.extract()
+                        c_imgs = extract_all_images(c, u, s)
+                        
+                        return (f"--- Competitor URL: {u} ---\nSTRUCTURED JSON-LD DATA:\n{comp_json.model_dump_json(indent=2)}\n\nVISIBLE TEXT:\n{s.get_text(separator=' ', strip=True)}", c_imgs, u)
+                    except Exception as ex:
+                        return (f"--- Competitor URL: {u} ---\nContent: Failed to fetch ({ex})", [], None)
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    results = list(executor.map(fetch_bb, urls_to_fetch))
+                    for text, c_imgs, u in results:
+                        competitor_htmls.append(text)
+                        if u:
+                            visited_urls.append(u)
+                        for img_str in c_imgs:
+                            if img_str not in seen:
+                                seen.add(img_str)
+                                unique_images.append(img_str)
+
+                images_context = "\n".join(unique_images)
+                task.append_activity("scraping", f"Total unique images after competitors: {len(unique_images)}")
+                db.commit()
 
             # Read the user's detailed system prompt
             system_prompt_path = os.path.join(os.path.dirname(__file__), "system_prompt.txt")
@@ -542,13 +540,13 @@ def process_scrape(self, task_id: str):
                 if category_override:
                     matching = next((c for c in category_specs if c.category_name.lower() == category_override.lower()), None)
                     if matching:
-                        rules += f"3. The user has MANUALLY FORCED the category to '{matching.category_name}'. STRICT ENFORCEMENT: The \"Specification Data\" dictionary MUST contain EXACTLY these keys: {json.dumps(matching.specifications)}. Do NOT omit ANY of these keys. If you cannot find data for a key, you MUST still output the key with an empty string (\"\") as the value.\n"
+                        rules += f"3. The user has MANUALLY FORCED the category to '{matching.category_name}'. STRICT ENFORCEMENT: The \"specifications\" dictionary MUST contain EXACTLY these keys: {json.dumps(matching.specifications)}. Do NOT omit ANY keys. If data is missing, output the key with value \"N/A\". Extra specs NOT in this list MUST go into a separate dictionary named \"additional_features\".\n"
                     else:
                         rules += f"3. The user tried to force category '{category_override}' but it was not found. Try your best to match the product.\n"
                 else:
-                    rules += "3. Identify which single category above BEST MATCHES this product. STRICT ENFORCEMENT: The \"Specification Data\" dictionary MUST contain EXACTLY all the keys listed for that matched category. Do NOT omit ANY keys. If you cannot find data for a key, you MUST still output the key with an empty string (\"\") as the value. Do not invent new keys.\n"
+                    rules += "3. Identify which single category above BEST MATCHES this product. STRICT ENFORCEMENT: The \"specifications\" dictionary MUST contain EXACTLY all the keys listed for that matched category. Do NOT omit ANY keys. If data is missing, output the key with value \"N/A\". Extra specs NOT in this list MUST go into a separate dictionary named \"additional_features\".\n"
                     rules += "4. If you cannot confidently match the product to ANY of the listed categories above, you MUST output a JSON object with ONLY this field: {\"category_error\": \"No matching category found\"} and nothing else.\n"
-                    rules += "5. Any other specifications you find that are not in the matched category's allowed list MUST be placed in the `Feature Data` array instead.\n"
+                    rules += "5. Any extra specifications found that are not in the matched category's allowed list MUST be placed in the `additional_features` dictionary (e.g. {\"Bluetooth\": \"v5.0\"}).\n"
                 system_prompt_text += "\n\n" + rules
             # --- PHASE B: AI ENRICHMENT ---
             task.append_activity("ai_processing", "Finalizing JSON with AI agent using combined context")
@@ -558,8 +556,14 @@ def process_scrape(self, task_id: str):
             from app.tasks.structured_extraction import build_product_json
             primary_json = build_product_json(html_content, task.url)
 
-            # Truncate text to avoid exceeding model context limits (16k-32k max usually)
-            competitor_text = "\n\n".join(competitor_htmls)[:30000]
+            # Truncate text FAIRLY to avoid exceeding model context limits, ensuring all competitors are included
+            max_total_len = 30000
+            if competitor_htmls:
+                max_per_comp = max_total_len // len(competitor_htmls)
+                truncated_comps = [c[:max_per_comp] for c in competitor_htmls]
+                competitor_text = "\n\n".join(truncated_comps)
+            else:
+                competitor_text = ""
             
             prompt2 = f"Primary URL STRUCTURED JSON-LD:\n{primary_json.model_dump_json(indent=2)}\n\nPhase 1 Agent Data (Structured JSON):\n{json.dumps(source_data, indent=2)}\n\nExtra Search Context (Serper):\n{serper_data}\n\nCompetitor Content:\n{competitor_text}\n\nMerge the Competitor Content and JSON-LD data into the Source Data to enrich it, filling in any missing fields. For the 'images' array, rely on the images extracted in the JSON-LD data. Output the final JSON exactly as specified in the OUTPUT FORMAT."
             
@@ -616,6 +620,55 @@ def process_scrape(self, task_id: str):
                     db.commit()
                     return f"Task {task_id} failed: {error_msg}"
                         
+
+                # --- BULLETPROOF PYTHON CATEGORY VALIDATION & PADDING ---
+                try:
+                    # Determine the category the LLM picked, or default to the override
+                    detected_category = product_data.get("product_identity", {}).get("category", "")
+                    cat_override = getattr(task, 'category_override', None)
+                    if cat_override:
+                        detected_category = cat_override
+                        
+                    # Find matching DB schema
+                    from app.models.category_spec import CategorySpec
+                    db_specs = db.query(CategorySpec).all()
+                    matched_spec = next((c for c in db_specs if c.category_name.lower() == detected_category.lower()), None)
+                    
+                    if matched_spec and matched_spec.specifications:
+                        required_keys = matched_spec.specifications
+                        
+                        # Ensure dictionaries exist
+                        if "specifications" not in product_data or not isinstance(product_data["specifications"], dict):
+                            product_data["specifications"] = {}
+                        if "additional_features" not in product_data or not isinstance(product_data["additional_features"], dict):
+                            product_data["additional_features"] = {}
+                            
+                        llm_specs = product_data["specifications"]
+                        
+                        # 1. Pruning: Move extra keys from specifications -> additional_features
+                        keys_to_move = []
+                        for k in llm_specs.keys():
+                            if k not in required_keys:
+                                keys_to_move.append(k)
+                        
+                        for k in keys_to_move:
+                            val = llm_specs.pop(k)
+                            product_data["additional_features"][k] = val
+                            
+                        # 2. Padding: Inject missing keys with "N/A"
+                        for rk in required_keys:
+                            if rk not in llm_specs:
+                                llm_specs[rk] = "N/A"
+                                
+                        # 3. Format Enforcement: Re-sort to match the DB order exactly
+                        sorted_specs = {rk: llm_specs[rk] for rk in required_keys}
+                        product_data["specifications"] = sorted_specs
+                        task.append_activity("ai_processing", f"Strict JSON enforcement applied for category '{matched_spec.category_name}'")
+                        
+                except Exception as ve:
+                    print(f"Post-processing validation error (non-fatal): {ve}")
+                # --- END BULLETPROOF VALIDATION ---
+                
                 if not product_data.get("images") and img_val:
                     product_data["images"] = [{"media_type": "image", "media": img_val, "media_alt_tag": "Fallback"}]
                     

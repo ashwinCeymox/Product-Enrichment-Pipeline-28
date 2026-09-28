@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import api from '../api/client';
-import { UploadCloud, Play, Calendar, AlertCircle, Loader2, XCircle } from 'lucide-react';
+import { UploadCloud, Play, Calendar, AlertCircle, Loader2, XCircle, Search, RefreshCw, ChevronLeft, ChevronRight, Check, Copy } from 'lucide-react';
 import clsx from 'clsx';
 import InsufficientCreditsModal from '../components/InsufficientCreditsModal';
 
@@ -12,6 +12,44 @@ export default function CreateJob() {
   const [productType, setProductType] = useState('simple');
   const [generateAiImages, setGenerateAiImages] = useState(false);
   const [textModel, setTextModel] = useState('');
+  const [globalDefaultModel, setGlobalDefaultModel] = useState('');
+
+  useEffect(() => {
+    api.get('/settings/models').then(res => {
+      if (res.data && res.data.scraping_model) {
+        setGlobalDefaultModel(res.data.scraping_model);
+      }
+    }).catch(err => console.error("Failed to load default models:", err));
+  }, []);
+  
+  // New Tab State
+  const [activeTab, setActiveTab] = useState('source'); // 'source' or 'search'
+  
+  // Search State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCountry, setSelectedCountry] = useState('us');
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [refetchLoading, setRefetchLoading] = useState(false);
+  const [selectedSearchUrls, setSelectedSearchUrls] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [searchError, setSearchError] = useState('');
+  const [toastMessage, setToastMessage] = useState(null);
+
+  const copyToClipboard = async (text, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setToastMessage('URL copied to clipboard!');
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (err) {
+      setToastMessage('Failed to copy URL');
+      setTimeout(() => setToastMessage(null), 3000);
+    }
+  };
+  
+  const ITEMS_PER_PAGE = 5;
   
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -24,6 +62,50 @@ export default function CreateJob() {
 
   const urlList = urls.split('\n').map(u => u.trim()).filter(Boolean);
 
+  const performSearch = async (e, isRefetch = false) => {
+    if (e) e.preventDefault();
+    if (!searchQuery.trim()) {
+      setSearchError('Please enter a product name, SKU, or search term.');
+      return;
+    }
+    setSearchError('');
+    if (isRefetch) setRefetchLoading(true);
+    else setSearchLoading(true);
+    
+    try {
+      const res = await api.post('/jobs/search-urls', {
+        query: searchQuery,
+        country: selectedCountry
+      });
+      setSearchResults(res.data.results || []);
+      setCurrentPage(1);
+      if (isRefetch || !isRefetch) { // Clear selections on new search or refetch
+        setSelectedSearchUrls([]);
+      }
+    } catch (err) {
+      setSearchError(err.response?.data?.detail || 'Unable to fetch search results. Please try again.');
+    } finally {
+      if (isRefetch) setRefetchLoading(false);
+      else setSearchLoading(false);
+    }
+  };
+
+  const toggleUrlSelection = (url) => {
+    setSelectedSearchUrls(prev => {
+      if (prev.includes(url)) {
+        return prev.filter(u => u !== url);
+      }
+      if (prev.length >= 4) return prev;
+      return [...prev, url];
+    });
+  };
+
+  const currentSearchItems = searchResults.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+  const totalPages = Math.ceil(searchResults.length / ITEMS_PER_PAGE);
+
+  // ... (Original logic below) ...
+
+
   const handleStartProcessingClick = (e) => {
     e.preventDefault();
     if (!generateAiImages) {
@@ -34,25 +116,38 @@ export default function CreateJob() {
   };
 
   const executeSubmit = async () => {
-    if (!taskName || urlList.length === 0) return;
+    if (!taskName) return;
+    if (activeTab === 'source' && urlList.length === 0) return;
+    if (activeTab === 'search' && selectedSearchUrls.length === 0) return;
     setShowAiWarningModal(false);
     
     setLoading(true);
     setMessage('');
     try {
-      const res = await api.post('/jobs', {
+      const payload = {
         task_name: taskName,
-        urls: urlList,
         priority: priority,
         scheduled_date: scheduledDate || null,
         product_type: productType,
         created_by: 'admin',
         generate_ai_images: generateAiImages,
         text_model_override: textModel || undefined
-      });
+      };
+
+      if (activeTab === 'source') {
+        payload.urls = urlList;
+      } else {
+        payload.primary_url = selectedSearchUrls[0];
+        payload.reference_urls = selectedSearchUrls.slice(1);
+      }
+
+      const res = await api.post('/jobs', payload);
       setMessage(`Success! ${res.data.message}`);
       setUrls('');
       setTaskName('');
+      setSelectedSearchUrls([]);
+      setSearchResults([]);
+      setSearchQuery('');
       setScheduledDate('');
       setPriority('low');
       setProductType('simple');
@@ -109,6 +204,9 @@ export default function CreateJob() {
       setMessage(`Success! ${res.data.message}`);
       setUrls('');
       setTaskName('');
+      setSelectedSearchUrls([]);
+      setSearchResults([]);
+      setSearchQuery('');
       setScheduledDate('');
       setPriority('low');
       setProductType('simple');
@@ -205,88 +303,300 @@ export default function CreateJob() {
                 className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-primary focus:border-primary sm:text-sm bg-white"
               >
                 <option value="">System Default</option>
-                <option value="openai/gpt-4o">GPT-4o</option>
-                <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
-                <option value="anthropic/claude-sonnet-5">Claude 5 Sonnet</option>
-                <option value="anthropic/claude-haiku-4.5">Claude 4.5 Haiku</option>
-                <option value="google/gemini-3.8-flash">Gemini 3.8 Flash</option>
-                <option value="google/gemini-3.7-flash">Gemini 3.7 Flash</option>
-                <option value="google/gemini-3.6-flash">Gemini 3.6 Flash</option>
-                <option value="google/gemini-3.5-flash">Gemini 3.5 Flash</option>
-                <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
-                <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+                {[
+                  { value: 'openai/gpt-4o', label: 'GPT-4o' },
+                  { value: 'openai/gpt-4o-mini', label: 'GPT-4o Mini' },
+                  { value: 'anthropic/claude-sonnet-5', label: 'Claude 5 Sonnet' },
+                  { value: 'anthropic/claude-haiku-4.5', label: 'Claude 4.5 Haiku' },
+                  { value: 'google/gemini-3.8-flash', label: 'Gemini 3.8 Flash' },
+                  { value: 'google/gemini-3.7-flash', label: 'Gemini 3.7 Flash' },
+                  { value: 'google/gemini-3.6-flash', label: 'Gemini 3.6 Flash' },
+                  { value: 'google/gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+                  { value: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+                  { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+                  { value: 'deepseek/deepseek-chat', label: 'DeepSeek Chat' }
+                ].filter(m => m.value !== globalDefaultModel).map(m => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
                 
               </select>
               <p className="text-xs text-slate-500 mt-1">Overrides the global settings model for this task.</p>
             </div>
           </div>
 
-          <div>
-            <div className="flex justify-between items-end mb-1">
-              <label className="block text-sm font-medium text-slate-700">Source URLs</label>
-              <span className="text-xs text-slate-500">{urlList.length} valid URL(s) detected</span>
-            </div>
-            <textarea 
-              required
-              rows={8}
-              value={urls}
-              onChange={e => setUrls(e.target.value)}
-              placeholder="https://example.com/product-1&#10;https://example.com/product-2"
-              className="w-full px-3 border border-slate-300 rounded-md font-mono text-sm focus:ring-primary focus:border-primary bg-white outline-none"
-              style={{
-                backgroundImage: 'linear-gradient(transparent, transparent 27px, #e2e8f0 27px, #e2e8f0 28px)',
-                backgroundSize: '100% 28px',
-                lineHeight: '28px',
-                paddingTop: '6px',
-                resize: 'vertical'
-              }}
-            />
-          </div>
-
-          <div className="flex items-start gap-3 pt-2">
-            <div className="flex items-center h-5 mt-0.5">
-              <input
-                id="generate_ai_images"
-                type="checkbox"
-                checked={generateAiImages}
-                onChange={(e) => setGenerateAiImages(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
-              />
-            </div>
-            <div className="text-sm">
-              <label htmlFor="generate_ai_images" className="font-medium text-slate-800 cursor-pointer">Generate AI Images</label>
-              <p className="text-slate-500 text-xs mt-0.5">Automatically generate high-quality product images using AI.</p>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-slate-100">
-            <button 
-              type="submit" 
-              disabled={loading || !taskName || urlList.length === 0}
-              className="inline-flex items-center justify-center gap-2 bg-primary text-white px-5 py-2.5 rounded-md font-medium text-sm hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50 transition-colors"
-            >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
-              Start Processing
-            </button>
-            <div className="relative flex-1 sm:flex-none">
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleCsvUpload}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                disabled={loading || !taskName}
-                title={!taskName ? "Please enter a Task Name first" : "Upload CSV"}
-              />
-              <button 
+          <div className="border-t border-slate-100 pt-4">
+            <div className="flex border-b border-slate-200 mb-4">
+              <button
                 type="button"
-                disabled={loading || !taskName}
-                className="w-full inline-flex items-center justify-center gap-2 bg-white text-slate-700 border border-slate-300 px-5 py-2.5 rounded-md font-medium text-sm hover:bg-slate-50 focus:outline-none transition-colors disabled:opacity-50"
+                onClick={() => setActiveTab('source')}
+                className={`py-2 px-4 border-b-2 font-medium text-sm transition-colors ${activeTab === 'source' ? 'border-primary text-primary' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}
               >
-                <UploadCloud size={16} />
-                Upload CSV
+                Source URLs
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('search')}
+                className={`py-2 px-4 border-b-2 font-medium text-sm transition-colors ${activeTab === 'search' ? 'border-primary text-primary' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}
+              >
+                Search URLs
               </button>
             </div>
+
+            {activeTab === 'source' && (
+              <div>
+                <div className="flex justify-between items-end mb-1">
+                  <label className="block text-sm font-medium text-slate-700">Source URLs</label>
+                  <span className="text-xs text-slate-500">{urlList.length} valid URL(s) detected</span>
+                </div>
+                <textarea 
+                  required={activeTab === 'source'}
+                  rows={8}
+                  value={urls}
+                  onChange={e => setUrls(e.target.value)}
+                  placeholder="https://example.com/product-1\nhttps://example.com/product-2"
+                  className="w-full px-3 border border-slate-300 rounded-md font-mono text-sm focus:ring-primary focus:border-primary bg-white outline-none"
+                  style={{
+                    backgroundImage: 'linear-gradient(transparent, transparent 27px, #e2e8f0 27px, #e2e8f0 28px)',
+                    backgroundSize: '100% 28px',
+                    lineHeight: '28px',
+                    paddingTop: '6px',
+                    resize: 'vertical'
+                  }}
+                />
+              </div>
+            )}
+
+            {activeTab === 'search' && (
+              <div className="flex flex-col gap-4">
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && performSearch(e)}
+                      placeholder="Enter product name, SKU, brand, model, price, etc."
+                      className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-primary focus:border-primary sm:text-sm bg-white"
+                    />
+                  </div>
+                  <div className="w-[180px] shrink-0 relative">
+                    <select
+                      value={selectedCountry}
+                      onChange={e => setSelectedCountry(e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-primary focus:border-primary sm:text-sm bg-white cursor-pointer"
+                    >
+                      {[
+  { code: 'us', name: 'United States' },
+  { code: 'af', name: 'Afghanistan' },
+  { code: 'al', name: 'Albania' },
+  { code: 'dz', name: 'Algeria' },
+  { code: 'as', name: 'American Samoa' },
+  { code: 'ad', name: 'Andorra' },
+  { code: 'ao', name: 'Angola' },
+  { code: 'ai', name: 'Anguilla' },
+  { code: 'aq', name: 'Antarctica' },
+  { code: 'ar', name: 'Argentina' },
+  { code: 'au', name: 'Australia' },
+  { code: 'at', name: 'Austria' },
+  { code: 'br', name: 'Brazil' },
+  { code: 'ca', name: 'Canada' },
+  { code: 'cn', name: 'China' },
+  { code: 'fr', name: 'France' },
+  { code: 'de', name: 'Germany' },
+  { code: 'in', name: 'India' },
+  { code: 'it', name: 'Italy' },
+  { code: 'jp', name: 'Japan' },
+  { code: 'mx', name: 'Mexico' },
+  { code: 'ae', name: 'UAE' },
+  { code: 'gb', name: 'United Kingdom' }
+].map(c => (
+                        <option key={c.code} value={c.code}>
+                          {c.name} ({c.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={e => performSearch(e)}
+                    disabled={searchLoading}
+                    className="inline-flex items-center justify-center gap-2 bg-slate-800 text-white px-4 py-2 rounded-md font-medium text-sm hover:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-800 disabled:opacity-50 transition-colors"
+                  >
+                    {searchLoading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+                    Search
+                  </button>
+                </div>
+                
+                {searchError && <div className="text-sm text-red-600 bg-red-50 p-2 rounded">{searchError}</div>}
+                
+                {searchResults.length > 0 && (
+                  <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
+                    <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 flex justify-between items-center">
+                      <div className="text-sm font-medium text-slate-700">
+                        Selected: <span className={selectedSearchUrls.length === 4 ? "text-amber-600 font-bold" : ""}>{selectedSearchUrls.length} / 4</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={e => performSearch(e, true)}
+                        disabled={refetchLoading}
+                        className="text-slate-500 hover:text-slate-800 flex items-center gap-1 text-sm font-medium transition-colors disabled:opacity-50"
+                      >
+                        <RefreshCw size={14} className={refetchLoading ? "animate-spin" : ""} /> Refetch
+                      </button>
+                    </div>
+                    
+                    <div className="divide-y divide-slate-100">
+                      {currentSearchItems.map((result, idx) => {
+                        const isSelected = selectedSearchUrls.includes(result.url);
+                        const selectionIndex = selectedSearchUrls.indexOf(result.url);
+                        const isDisabled = !isSelected && selectedSearchUrls.length >= 4;
+                        
+                        return (
+                          <label key={result.url} className={`flex items-start gap-3 p-4 hover:bg-slate-50 cursor-pointer transition-colors ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                            <div className="pt-1">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                disabled={isDisabled}
+                                onChange={() => toggleUrlSelection(result.url)}
+                                className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer disabled:cursor-not-allowed"
+                              />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                {isSelected && (
+                                  <span className={`inline-flex items-center justify-center px-2 py-0.5 rounded text-xs font-medium ${selectionIndex === 0 ? 'bg-primary/10 text-primary' : 'bg-slate-100 text-slate-600'}`}>
+                                    {selectionIndex === 0 ? 'PRIMARY' : `REFERENCE ${selectionIndex}`}
+                                  </span>
+                                )}
+                                <h4 className="text-sm font-medium text-slate-900 truncate">{result.title}</h4>
+                              </div>
+                              <div className="flex items-center gap-2 mb-1 group max-w-full">
+                                <button 
+                                  type="button"
+                                  onClick={(e) => copyToClipboard(result.url, e)}
+                                  className="text-xs text-blue-600 hover:underline truncate text-left"
+                                  title="Click to copy"
+                                >
+                                  {result.url}
+                                </button>
+                                <button 
+                                  type="button"
+                                  onClick={(e) => copyToClipboard(result.url, e)}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-slate-600 shrink-0"
+                                  title="Copy URL"
+                                >
+                                  <Copy size={14} />
+                                </button>
+                              </div>
+                              <p className="text-xs text-slate-500 line-clamp-2">{result.snippet}</p>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    
+                    {totalPages > 1 && (
+                      <div className="bg-slate-50 px-4 py-3 border-t border-slate-200 flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                          className="p-1 rounded text-slate-500 hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                        >
+                          <ChevronLeft size={20} />
+                        </button>
+                        <span className="text-sm text-slate-600">Page {currentPage} of {totalPages}</span>
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                          disabled={currentPage === totalPages}
+                          className="p-1 rounded text-slate-500 hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                        >
+                          <ChevronRight size={20} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {selectedSearchUrls.length > 0 && (
+                  <div className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-4">
+                    <h3 className="text-sm font-semibold text-slate-800 mb-3">Selected URLs</h3>
+                    <div className="space-y-3">
+                      <div>
+                        <div className="text-xs font-bold text-primary uppercase tracking-wider mb-1">Primary URL</div>
+                        <div className="text-sm text-slate-700 bg-white px-3 py-2 border border-slate-200 rounded break-all shadow-sm">
+                          {selectedSearchUrls[0]}
+                        </div>
+                      </div>
+                      {selectedSearchUrls.length > 1 && (
+                        <div>
+                          <div className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Reference URLs</div>
+                          <div className="space-y-1.5">
+                            {selectedSearchUrls.slice(1).map((url, i) => (
+                              <div key={url} className="text-sm text-slate-600 bg-white px-3 py-2 border border-slate-200 rounded break-all shadow-sm">
+                                {url}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+
+          {(activeTab === 'source' || (activeTab === 'search' && selectedSearchUrls.length === 4)) && (
+            <>
+              <div className="flex items-start gap-3 pt-2">
+                <div className="flex items-center h-5 mt-0.5">
+                  <input
+                    id="generate_ai_images"
+                    type="checkbox"
+                    checked={generateAiImages}
+                    onChange={(e) => setGenerateAiImages(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-primary focus:ring-primary cursor-pointer"
+                  />
+                </div>
+                <div className="text-sm">
+                  <label htmlFor="generate_ai_images" className="font-medium text-slate-800 cursor-pointer">Generate AI Images</label>
+                  <p className="text-slate-500 text-xs mt-0.5">Automatically generate high-quality product images using AI.</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-slate-100">
+                <button 
+                  type="submit" 
+                  disabled={loading || !taskName || (activeTab === 'source' ? urlList.length === 0 : selectedSearchUrls.length === 0)}
+                  className="inline-flex items-center justify-center gap-2 bg-primary text-white px-5 py-2.5 rounded-md font-medium text-sm hover:bg-primary-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary disabled:opacity-50 transition-colors"
+                >
+                  {loading ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+                  Start Processing
+                </button>
+                <div className="relative flex-1 sm:flex-none">
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={handleCsvUpload}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    disabled={loading || !taskName}
+                    title={!taskName ? "Please enter a Task Name first" : "Upload CSV"}
+                  />
+                  <button 
+                    type="button"
+                    disabled={loading || !taskName}
+                    className="w-full inline-flex items-center justify-center gap-2 bg-white text-slate-700 border border-slate-300 px-5 py-2.5 rounded-md font-medium text-sm hover:bg-slate-50 focus:outline-none transition-colors disabled:opacity-50"
+                  >
+                    <UploadCloud size={16} />
+                    Upload CSV
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
           
           {message && (
             <div className={clsx("p-3 rounded-md text-sm", message.startsWith('Error') ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700")}>
@@ -355,6 +665,14 @@ export default function CreateJob() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast Message */}
+      {toastMessage && (
+        <div className="fixed bottom-4 right-4 z-50 bg-slate-800 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2 animate-fade-in-up">
+          <Check size={18} className="text-emerald-400" />
+          <span className="text-sm font-medium">{toastMessage}</span>
         </div>
       )}
     </div>
