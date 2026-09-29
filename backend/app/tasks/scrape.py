@@ -33,7 +33,7 @@ def extract_all_images(html_content, base_url, soup=None):
         
         lower_src = abs_src.lower()
         # Filter junk/tracking pixels
-        if any(j in lower_src for j in ['1x1', 'base64', 'sprite', 'icon', 'nav-', '.gif']):
+        if any(j in lower_src for j in ['1x1', 'base64', 'sprite', 'icon', 'nav-', 'logo', 'banner', '.gif']):
             return
             
         if abs_src in seen_urls:
@@ -236,7 +236,7 @@ def process_scrape(self, task_id: str):
                     
                     # Filter junk
                     lower_src = abs_src.lower()
-                    if any(j in lower_src for j in ['1x1', 'base64', 'sprite', 'icon', 'nav-', '.gif']):
+                    if any(j in lower_src for j in ['1x1', 'base64', 'sprite', 'icon', 'nav-', 'logo', 'banner', '.gif']):
                         return
                         
                     if abs_src not in seen_images:
@@ -516,6 +516,31 @@ def process_scrape(self, task_id: str):
                 task.append_activity("scraping", f"Total unique images after competitors: {len(unique_images)}")
                 db.commit()
 
+            # --- TOKEN SAVING IMAGE COMPRESSION ---
+            compressed_images_text = ""
+            ENRICH_IMAGES_FROM_COMPETITORS = True
+            if ENRICH_IMAGES_FROM_COMPETITORS and unique_images:
+                try:
+                    dense_imgs = []
+                    seen_urls = set()
+                    for img_str in unique_images:
+                        parts = img_str.split(" | Alt: ")
+                        url_part = parts[0].replace("Image: ", "").strip()
+                        alt_part = parts[1].strip() if len(parts) > 1 else ""
+                        if not url_part or url_part in seen_urls:
+                            continue
+                        seen_urls.add(url_part)
+                        dense_imgs.append(f"{url_part}|{alt_part}")
+                        
+                    compressed_images_text = "\n".join(dense_imgs)
+                    if isinstance(source_data, dict) and "images" in source_data:
+                        del source_data["images"]
+                    task.append_activity("scraping", f"Compressed {len(dense_imgs)} unique images for token-efficient LLM prompt")
+                    db.commit()
+                except Exception as img_inject_err:
+                    logger.warning(f"Non-fatal: Failed to compress images: {img_inject_err}")
+            # --- END TOKEN SAVING ---
+
             # Read the user's detailed system prompt
             system_prompt_path = os.path.join(os.path.dirname(__file__), "system_prompt.txt")
             try:
@@ -565,7 +590,21 @@ def process_scrape(self, task_id: str):
             else:
                 competitor_text = ""
             
-            prompt2 = f"Primary URL STRUCTURED JSON-LD:\n{primary_json.model_dump_json(indent=2)}\n\nPhase 1 Agent Data (Structured JSON):\n{json.dumps(source_data, indent=2)}\n\nExtra Search Context (Serper):\n{serper_data}\n\nCompetitor Content:\n{competitor_text}\n\nMerge the Competitor Content and JSON-LD data into the Source Data to enrich it, filling in any missing fields. For the 'images' array, rely on the images extracted in the JSON-LD data. Output the final JSON exactly as specified in the OUTPUT FORMAT."
+            # --- REVERSIBLE FIX: Improve image preservation in Phase 2 prompt ---
+            PRESERVE_ALL_SCRAPED_IMAGES = True
+            if PRESERVE_ALL_SCRAPED_IMAGES:
+                image_instruction = (
+                    "For the 'images' array, you MUST use the following raw images we scraped.\n"
+                    "Format each as {\"media_type\": \"image\", \"media\": \"URL\", \"media_alt_tag\": \"ALT\"}.\n"
+                    "Sort them strictly based on relevance (best hero product shots first). Filter out any payment/bank banners, pure logos, or UI buttons if any slipped through.\n"
+                    f"RAW SCRAPED IMAGES (Format: URL|ALT):\n{compressed_images_text}\n"
+                    "Do NOT drop valid product images."
+                )
+            else:
+                image_instruction = "For the 'images' array, rely on the images extracted in the JSON-LD data."
+            # --- END REVERSIBLE FIX ---
+            
+            prompt2 = f"Primary URL STRUCTURED JSON-LD:\n{primary_json.model_dump_json(indent=2)}\n\nPhase 1 Agent Data (Structured JSON):\n{json.dumps(source_data, indent=2)}\n\nExtra Search Context (Serper):\n{serper_data}\n\nCompetitor Content:\n{competitor_text}\n\nMerge the Competitor Content and JSON-LD data into the Source Data to enrich it, filling in any missing fields. {image_instruction} Output the final JSON exactly as specified in the OUTPUT FORMAT."
             
             # Save the LLM prompt alongside raw HTML so the frontend can display both
             existing_html = task.raw_html or ""
@@ -669,8 +708,28 @@ def process_scrape(self, task_id: str):
                     print(f"Post-processing validation error (non-fatal): {ve}")
                 # --- END BULLETPROOF VALIDATION ---
                 
+                # --- REVERSIBLE FIX: Guarantee scraped images survive LLM truncation ---
+                # Set to False to revert to old behavior (only fallback to single og:image)
+                GUARANTEE_SCRAPED_IMAGES = True
+                if GUARANTEE_SCRAPED_IMAGES:
+                    if not product_data.get("images") or len(product_data.get("images", [])) == 0:
+                        try:
+                            all_imgs = []
+                            for img_str in unique_images:
+                                parts = img_str.split(" | Alt: ")
+                                u_part = parts[0].replace("Image: ", "").strip()
+                                if u_part:
+                                    all_imgs.append({"media_type": "image", "media": u_part, "media_alt_tag": parts[1].strip() if len(parts) > 1 else ""})
+                            if all_imgs:
+                                product_data["images"] = all_imgs
+                                task.append_activity("ai_processing", f"LLM dropped images. Forcibly restored {len(all_imgs)} scraped images.")
+                        except Exception:
+                            pass
+                
+                # Original fallback if all else fails
                 if not product_data.get("images") and img_val:
                     product_data["images"] = [{"media_type": "image", "media": img_val, "media_alt_tag": "Fallback"}]
+                # --- END REVERSIBLE FIX ---
                     
                 # Inject visited URLs as sources
                 product_data["sources"] = visited_urls

@@ -20,7 +20,7 @@ WEB_PORT=8083
 API_PORT=$(get_free_port 8000)
 DB_PORT=$(get_free_port 5433)
 REDIS_PORT=$(get_free_port 6379)
-PGWEB_PORT=$(get_free_port 8081)
+PGWEB_PORT=$(get_free_port 8085)
 STEEL_PORT=$(get_free_port 3000)
 STEEL_DEBUG_PORT=$(get_free_port 9223)
 

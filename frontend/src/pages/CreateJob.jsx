@@ -4,14 +4,39 @@ import { UploadCloud, Play, Calendar, AlertCircle, Loader2, XCircle, Search, Ref
 import clsx from 'clsx';
 import InsufficientCreditsModal from '../components/InsufficientCreditsModal';
 
+
+const useSessionState = (key, defaultValue) => {
+  const [value, setValue] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(key);
+      if (saved !== null) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error("Session storage parse error:", e);
+    }
+    return defaultValue;
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      console.error("Session storage set error:", e);
+    }
+  }, [key, value]);
+
+  return [value, setValue];
+};
+
 export default function CreateJob() {
-  const [taskName, setTaskName] = useState('');
-  const [urls, setUrls] = useState('');
-  const [priority, setPriority] = useState('low');
-  const [scheduledDate, setScheduledDate] = useState('');
-  const [productType, setProductType] = useState('simple');
-  const [generateAiImages, setGenerateAiImages] = useState(false);
-  const [textModel, setTextModel] = useState('');
+  const [taskName, setTaskName] = useSessionState('cj_taskName', '');
+  const [urls, setUrls] = useSessionState('cj_urls', '');
+  const [priority, setPriority] = useSessionState('cj_priority', 'low');
+  const [scheduledDate, setScheduledDate] = useSessionState('cj_scheduledDate', '');
+  const [productType, setProductType] = useSessionState('cj_productType', 'simple');
+  const [generateAiImages, setGenerateAiImages] = useSessionState('cj_generateAiImages', false);
+  const [textModel, setTextModel] = useSessionState('cj_textModel', '');
   const [globalDefaultModel, setGlobalDefaultModel] = useState('');
 
   useEffect(() => {
@@ -23,15 +48,15 @@ export default function CreateJob() {
   }, []);
   
   // New Tab State
-  const [activeTab, setActiveTab] = useState('source'); // 'source' or 'search'
+  const [activeTab, setActiveTab] = useSessionState('cj_activeTab', 'source'); // 'source' or 'search'
   
   // Search State
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCountry, setSelectedCountry] = useState('us');
-  const [searchResults, setSearchResults] = useState([]);
+  const [searchQuery, setSearchQuery] = useSessionState('cj_searchQuery', '');
+  const [selectedCountry, setSelectedCountry] = useSessionState('cj_selectedCountry', 'us');
+  const [searchResults, setSearchResults] = useSessionState('cj_searchResults', []);
   const [searchLoading, setSearchLoading] = useState(false);
   const [refetchLoading, setRefetchLoading] = useState(false);
-  const [selectedSearchUrls, setSelectedSearchUrls] = useState([]);
+  const [selectedSearchUrls, setSelectedSearchUrls] = useSessionState('cj_selectedSearchUrls', []);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchError, setSearchError] = useState('');
   const [toastMessage, setToastMessage] = useState(null);

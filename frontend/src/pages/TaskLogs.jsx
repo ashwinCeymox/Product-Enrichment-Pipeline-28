@@ -3,7 +3,7 @@ import api from '../api/client';
 import { Search, Loader2, Image as ImageIcon, FileText, RefreshCw, Clock, CheckCircle2, XCircle, AlertCircle, RefreshCcw, Trash2, Calendar, Filter, X } from 'lucide-react';
 import { TaskLogsSkeleton } from '../components/Shimmer';
 import clsx from 'clsx';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 
 export default function TaskLogs() {
   const [tasks, setTasks] = useState([]);
@@ -29,11 +29,28 @@ export default function TaskLogs() {
   
   // Toast State
   const [toastMessage, setToastMessage] = useState(null);
+  
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
   const [groupToAbort, setGroupToAbort] = useState(null);
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const targetTaskId = searchParams.get('taskId');
+
+  // Show toast passed from ContentPreview via router state
+  useEffect(() => {
+    if (location.state?.toastMessage) {
+      setToastMessage(location.state.toastMessage);
+      setTimeout(() => setToastMessage(null), 4000);
+      // Clear the state so it doesn't re-trigger on back/forward navigation
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const fetchTasks = async (isManualRefresh = false) => {
     if (isManualRefresh === true) setIsRefreshing(true);
@@ -153,7 +170,7 @@ export default function TaskLogs() {
       setToastMessage(`Group ${groupToAbort} aborted`);
       fetchTasks();
     } catch (err) {
-      showToast("Failed to abort group.", "error");
+      showToast("Failed to abort group.");
     } finally {
       setGroupToAbort(null);
     }
@@ -167,7 +184,7 @@ export default function TaskLogs() {
       setJobToAbort(null);
       fetchTasks();
     } catch (err) {
-      showToast("Failed to abort task.", "error");
+      showToast("Failed to abort task.");
     } finally {
       setIsAborting(false);
     }
@@ -183,25 +200,32 @@ export default function TaskLogs() {
   const handleRescheduleSubmit = async () => {
     if (!rescheduleTask) return;
     if (rescheduleType === 'later' && !rescheduleDate) {
-      showToast("Please select a date to schedule.", "error");
+      showToast("Please select a date to schedule.");
       return;
     }
     
-    setRescheduleLoading(true);
-    setReschedulingJob(rescheduleTask.job_id); // update button loading state too
+    // UI enhancement: Close modal immediately so it doesn't feel stuck
+    const targetJobId = rescheduleTask.job_id;
+    const isLater = rescheduleType === 'later';
+    const chosenDate = rescheduleDate;
+    const catOverride = rescheduleCategory;
+    
+    setShowRescheduleModal(false);
+    setRescheduleTask(null);
+    setRescheduleCategory('');
+    setReschedulingJob(targetJobId);
+    showToast("Rescheduling task...");
+    
     try {
-      await api.post(`/jobs/${rescheduleTask.job_id}/reschedule`, {
-        scheduled_date: rescheduleType === 'later' ? rescheduleDate : null,
-        category_override: rescheduleCategory || null
+      await api.post(`/jobs/${targetJobId}/reschedule`, {
+        scheduled_date: isLater ? chosenDate : null,
+        category_override: catOverride || null
       });
+      showToast("Task rescheduled successfully!");
       fetchTasks();
-      setShowRescheduleModal(false);
-      setRescheduleTask(null);
-      setRescheduleCategory('');
     } catch (error) {
-      showToast("Failed to reschedule job.", "error");
+      showToast("Failed to reschedule job.");
     } finally {
-      setRescheduleLoading(false);
       setReschedulingJob(null);
     }
   };

@@ -278,7 +278,6 @@ export default function Settings() {
               <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-sm">
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-semibold text-slate-800 text-[14px]">Open Router</h3>
-                  <span className="bg-emerald-50 text-emerald-600 text-[9px] font-bold px-2 py-0.5 rounded border border-emerald-100 uppercase">ACTIVE</span>
                 </div>
                 <div className="relative mb-3">
                   <input 
@@ -320,7 +319,6 @@ export default function Settings() {
               <div className="bg-white border border-slate-200 rounded-lg p-5 shadow-sm">
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-semibold text-slate-800 text-[14px]">Serper API</h3>
-                  <span className="bg-slate-100 text-slate-500 text-[9px] font-bold px-2 py-0.5 rounded border border-slate-200 uppercase">PROXY</span>
                 </div>
                 <div className="relative mb-3">
                   <input 

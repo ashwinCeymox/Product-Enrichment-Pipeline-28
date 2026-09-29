@@ -29,11 +29,19 @@ export default function ContentPreview() {
   
   // Toast State
   const [toastMessage, setToastMessage] = useState(null);
+
+  const showToast = (msg, type = "info") => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 4000);
+  };
   const [itemToRemove, setItemToRemove] = useState(null);
+  const [arrayItemToRemove, setArrayItemToRemove] = useState(null);
 
   // Accordion state: keep track of which main JSON keys are expanded. 
   // Undefined means "expanded by default".
   const [expandedSections, setExpandedSections] = useState({});
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [nextTaskGroup, setNextTaskGroup] = useState(null);
 
   const toggleSection = (key) => {
     setExpandedSections(prev => ({
@@ -73,7 +81,7 @@ export default function ContentPreview() {
         })
         .catch(err => console.error(err));
     }
-  }, [taskName, jobId]);
+  }, [taskName]);
 
   const currentJobIdRef = React.useRef(jobId);
 
@@ -243,6 +251,22 @@ export default function ContentPreview() {
     }
   };
 
+  const removeArrayItem = (path, indexToRemove) => {
+    try {
+      const newParsed = JSON.parse(jsonData);
+      let current = newParsed;
+      for (let i = 0; i < path.length; i++) {
+        current = current[path[i]];
+      }
+      if (Array.isArray(current)) {
+        current.splice(indexToRemove, 1);
+        setJsonData(JSON.stringify(newParsed, null, 2));
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const renderRecursiveEditor = (data, path = []) => {
     if (data === null || data === undefined) {
       return (
@@ -259,11 +283,18 @@ export default function ContentPreview() {
       return (
         <div className="flex flex-col gap-3 pl-4 border-l-2 border-indigo-200 mt-1 mb-2">
           {data.map((item, idx) => (
-            <div key={idx} className="flex gap-3 items-start bg-slate-50/50 p-2 rounded border border-slate-100">
+            <div key={idx} className="flex gap-3 items-start bg-slate-50/50 p-2 rounded border border-slate-100 relative group pr-8">
               <span className="text-[10px] font-bold text-slate-400 mt-2 w-4 shrink-0">{idx + 1}.</span>
-              <div className="flex-1">
+              <div className="flex-1 overflow-hidden">
                 {renderRecursiveEditor(item, [...path, idx])}
               </div>
+              <button 
+                onClick={() => setArrayItemToRemove({ path, index: idx })}
+                className="absolute top-2 right-2 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded-md transition-all bg-white"
+                title="Remove Item"
+              >
+                <Trash2 size={14} strokeWidth={2.5} />
+              </button>
             </div>
           ))}
         </div>
@@ -341,37 +372,51 @@ export default function ContentPreview() {
     }
   };
 
+
+  const fetchNextTaskGroup = async () => {
+    try {
+      const res = await api.get('/dashboard/recent-activity?limit=50');
+      const jobs = res.data.items || [];
+      const pendingJob = jobs.find(j => 
+        j.task_name !== taskName && 
+        !['completed', 'aborted', 'failed', 'removed'].includes(j.status)
+      );
+      setNextTaskGroup(pendingJob || null);
+    } catch (e) {
+      console.error("Failed to fetch next task group", e);
+    }
+  };
+
   const handleFinalizeAndSave = async () => {
     setSaving(true);
+    const currentJobId = jobId;
     try {
       // 1. Save manual JSON edits
-      await api.post(`/jobs/${jobId}/approve`, { product_data: JSON.parse(jsonData) });
+      await api.post(`/jobs/${currentJobId}/approve`, { product_data: JSON.parse(jsonData) });
       
       // 2. Embed generated AI images into the database product_data if applicable
       if (job?.status === 'image_generation_complete' || (job?.generate_ai_images && job?.status !== 'success')) {
         try {
-          await api.post(`/images/job/${jobId}/finish`);
+          await api.post(`/images/job/${currentJobId}/finish`);
         } catch (e) {
           console.error("Failed to finish images", e);
         }
       }
       
       // 3. Finalize bundle (generates ZIP and makes it available in Downloads tab)
-      // Sending an empty object so it doesn't overwrite the images just injected by /finish
-      await api.post(`/jobs/${jobId}/finalize`, {});
+      await api.post(`/jobs/${currentJobId}/finalize`, {});
       
-      showToast('Bundle Finalized and Saved successfully! It has been moved to the Downloads tab.');
+      // 4. Pop this task from the sidebar queue
+      const activeBundles = bundles.filter(b => b.id !== currentJobId && !['completed', 'aborted', 'failed', 'removed'].includes(b.status));
+      setBundles(activeBundles);
       
-      // Invalidate local cache/buffer
-      setJob(null);
-      setJsonData('');
-      setRealAssets([]);
-      
-      const activeBundles = bundles.filter(b => b.id !== jobId && !['completed', 'aborted', 'failed', 'removed'].includes(b.status));
+      // 5. Show toast and navigate to the next subtask
       if (activeBundles.length > 0) {
+        showToast('The following subtask has been saved to downloads.');
         navigate(`/task-logs/content-preview/${activeBundles[0].id}?taskName=${encodeURIComponent(taskName)}&tab=${activeTab}`);
       } else {
-        navigate(`/task-logs?taskName=${encodeURIComponent(taskName)}`);
+        await fetchNextTaskGroup();
+        setShowCompletionModal(true);
       }
     } catch (e) {
       console.error(e);
@@ -960,6 +1005,48 @@ export default function ContentPreview() {
         document.body
       )}
 
+            {/* Task Group Completion Modal */}
+      {showCompletionModal && createPortal(
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-8 text-center border border-slate-200 animate-in fade-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <CheckCircle2 size={32} />
+            </div>
+            <h2 className="text-2xl font-bold text-slate-800 mb-2">Task Group Complete!</h2>
+            <p className="text-slate-500 mb-8 leading-relaxed">
+              All products for <span className="font-semibold text-slate-700">"{taskName}"</span> have been successfully finalized and saved to downloads.
+            </p>
+            <div className="flex flex-col gap-3">
+              {nextTaskGroup ? (
+                <button
+                  onClick={() => {
+                    setShowCompletionModal(false);
+                    navigate(`/task-logs/content-preview/${nextTaskGroup.id}?taskName=${encodeURIComponent(nextTaskGroup.task_name)}&tab=table`);
+                  }}
+                  className="w-full py-3 px-4 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2 shadow-sm"
+                >
+                  Review Next Task: {nextTaskGroup.task_name} <ChevronRight size={16} />
+                </button>
+              ) : (
+                <div className="w-full py-3 px-4 bg-slate-100 text-slate-500 rounded-lg text-sm font-semibold flex items-center justify-center gap-2">
+                  No more pending tasks
+                </div>
+              )}
+              <button
+                onClick={() => {
+                  setShowCompletionModal(false);
+                  navigate('/task-logs');
+                }}
+                className="w-full py-3 px-4 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-50 transition-colors shadow-sm"
+              >
+                Return to Dashboard
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-5 left-1/2 z-50 bg-slate-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm font-medium flex items-center gap-2 toast-animate">
@@ -1031,6 +1118,40 @@ export default function ContentPreview() {
                 className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl transition-colors shadow-sm"
               >
                 Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    
+      {/* Array Item Remove Modal */}
+      {arrayItemToRemove && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-start gap-4 mb-6">
+              <div className="w-10 h-10 bg-rose-50 rounded-full flex items-center justify-center border border-rose-100 shrink-0">
+                <Trash2 className="text-rose-600" size={20} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Delete Item</h3>
+                <p className="text-sm text-slate-500 mt-1">Proceed with deleting the image?</p>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setArrayItemToRemove(null)}
+                className="flex-1 py-2.5 rounded-xl text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 font-semibold transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => {
+                  removeArrayItem(arrayItemToRemove.path, arrayItemToRemove.index);
+                  setArrayItemToRemove(null);
+                }}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl transition-colors shadow-sm"
+              >
+                Proceed
               </button>
             </div>
           </div>
