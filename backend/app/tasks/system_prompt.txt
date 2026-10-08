@@ -76,3 +76,4 @@ Return ONLY a valid JSON object matching this structure:
 
 OUTPUT INSTRUCTION:
 Return ONLY the raw JSON object. NO MARKDOWN FENCES, no extra text. Do NOT truncate the images array.
+CRITICAL: For the "Product Highlights Ai Images" object, you MUST hardcode the value to exactly {"lifestyle_images": [], "feature_images": []}. DO NOT hallucinate or inject any URLs into these arrays during phase 1.

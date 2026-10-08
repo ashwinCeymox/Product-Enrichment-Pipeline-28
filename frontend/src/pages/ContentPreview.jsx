@@ -636,7 +636,8 @@ export default function ContentPreview() {
 
           {job?.generate_ai_images && (
             <>
-              {['image_generation', 'image_generation_stopped', 'image_generation_complete', 'image_generation_failed'].includes(job?.status) || (job?.product_data?.['Product Highlights Ai Images']?.lifestyle_images?.length > 0 || job?.product_data?.['Product Highlights Ai Images']?.feature_images?.length > 0) ? (
+              {['image_generation', 'image_generation_stopped', 'image_generation_complete', 'image_generation_failed'].includes(job?.status) || 
+               ([...(job?.product_data?.['Product Highlights Ai Images']?.lifestyle_images || []), ...(job?.product_data?.['Product Highlights Ai Images']?.feature_images || [])].some(img => typeof img === 'object' && img !== null && (img.local_path || (img.url && !img.url.startsWith('http'))))) ? (
                 <button
                   onClick={() => navigate(`/task-logs/ai-images/${jobId}?taskName=${encodeURIComponent(taskName)}`)}
                   className="py-1.5 px-4 bg-[#00A389]/10 text-[#00A389] border border-[#00A389]/30 rounded-md text-xs font-semibold hover:bg-[#00A389]/20 transition-colors flex justify-center items-center gap-2 shadow-sm"
