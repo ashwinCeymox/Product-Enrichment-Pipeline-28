@@ -355,10 +355,10 @@ export default function AIImages() {
             (job.product_name || job.task_name || '').toLowerCase().includes(searchQuery.toLowerCase())
           ).map(job => {
             const isJobActive = activeJobId === job.job_id;
-            // Calculate percentage based on status or approved assets
+            // Calculate percentage based on strictly approved assets
             const totalAssets = job.assets.length;
             const approvedCount = job.assets.filter(a => a.variations.some(v => v.status === 'approved')).length;
-            const percentage = job.status === 'image_generation_complete' ? 100 : (totalAssets > 0 ? Math.round((approvedCount / totalAssets) * 100) : 0);
+            const percentage = totalAssets > 0 ? Math.round((approvedCount / totalAssets) * 100) : 0;
 
             return (
               <div key={job.job_id} className="mb-2 bg-slate-50/30 rounded-xl overflow-hidden">

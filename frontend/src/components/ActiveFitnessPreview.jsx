@@ -56,7 +56,10 @@ export default function ActiveFitnessPreview({ productData, onViewInImageReview 
   
   const [activeIndex, setActiveIndex] = useState(0);
   
-  const activeImageObj = allImages.length > 0 ? allImages[activeIndex] : null;
+  // Clamp activeIndex if images were removed externally (e.g. from Table View)
+  const safeIndex = allImages.length > 0 ? Math.min(activeIndex, allImages.length - 1) : 0;
+  
+  const activeImageObj = allImages.length > 0 ? allImages[safeIndex] : null;
   const activeImage = activeImageObj ? resolveImageUrl(activeImageObj) : heroImage;
   const isAIGenerated = activeImageObj && activeImageObj.group;
 
@@ -133,7 +136,7 @@ export default function ActiveFitnessPreview({ productData, onViewInImageReview 
               onClick={() => setActiveIndex(i)}
               className={clsx(
                 "w-[84px] h-[84px] object-cover border rounded-md cursor-pointer shrink-0 transition-all",
-                activeIndex === i ? "border-[#111111] border-2" : "border-[#e2e2e2] hover:border-[#8a8a8a]"
+                safeIndex === i ? "border-[#111111] border-2" : "border-[#e2e2e2] hover:border-[#8a8a8a]"
               )}
             />
           ))}
@@ -164,7 +167,7 @@ export default function ActiveFitnessPreview({ productData, onViewInImageReview 
           </div>
           <div className="flex flex-wrap justify-center gap-1.5 mt-3.5 max-w-[80%] mx-auto">
             {allImages.map((img, i) => (
-              <span key={i} onClick={() => setActiveIndex(i)} className={clsx("w-[34px] h-[3px] rounded-full cursor-pointer hover:bg-[#8a8a8a]", activeIndex === i ? "bg-[#111111]" : "bg-[#e2e2e2]")}></span>
+              <span key={i} onClick={() => setActiveIndex(i)} className={clsx("w-[34px] h-[3px] rounded-full cursor-pointer hover:bg-[#8a8a8a]", safeIndex === i ? "bg-[#111111]" : "bg-[#e2e2e2]")}></span>
             ))}
           </div>
         </div>

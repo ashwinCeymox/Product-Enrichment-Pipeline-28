@@ -337,9 +337,8 @@ async def _create_lifestyle_prompts(
                     {"role": "user",   "content": user_message},
                 ],
                 temperature=0.8,
-                max_tokens=400,
+                max_tokens=2000,
                 api_key=get_dynamic_env("OPENROUTER_API_KEY"),
-                response_format={"type": "json_object"}
             )
             prompt = _parse_prompt(response.choices[0].message.content)
             if prompt:
@@ -400,9 +399,8 @@ async def _create_feature_prompts(
                     {"role": "user",   "content": user_message},
                 ],
                 temperature=0.7,
-                max_tokens=400,
+                max_tokens=2000,
                 api_key=get_dynamic_env("OPENROUTER_API_KEY"),
-                response_format={"type": "json_object"}
             )
             prompt = _parse_prompt(response.choices[0].message.content)
             if prompt:

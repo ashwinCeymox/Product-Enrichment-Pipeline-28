@@ -22,10 +22,14 @@ def extract_all_images(html_content, base_url, soup=None):
     def add_image(src, alt=""):
         if not src:
             return
-        if ',' in src and ' ' in src:
-            # Taking the LAST element in a srcset usually yields the highest resolution image
-            # e.g., "img.jpg 300w, img-large.jpg 1000w" -> "img-large.jpg"
-            src = src.split(',')[-1].strip().split(' ')[0]
+        # Handle srcset or single URLs with width/density descriptors (e.g. "image.jpg 2x")
+        if ' ' in src:
+            if ',' in src:
+                # Taking the LAST element in a srcset usually yields the highest resolution image
+                src = src.split(',')[-1].strip().split(' ')[0]
+            else:
+                # E.g., "image.jpg 2x"
+                src = src.strip().split(' ')[0]
             
         if src.startswith('data:'):
             return
@@ -282,6 +286,12 @@ def process_scrape(self, task_id: str):
             
         clean_text = soup.get_text(separator=" ", strip=True)
         
+        # Manually extract PDFs
+        import re
+        pdf_links = list(set(re.findall(r"https?://[^\s\"'<>;;&\[\]{}]+?\.pdf", html_content, re.IGNORECASE)))
+        if pdf_links:
+            task.append_activity("scraping", f"Found {len(pdf_links)} PDF documents on primary URL")
+        
         # Manually extract images so LLM can see them
         unique_images = extract_all_images(html_content, task.url, soup)
         seen = set(unique_images)
@@ -454,7 +464,7 @@ def process_scrape(self, task_id: str):
                             val_resp = completion(
                                 model=f"openrouter/{actual_val_model}",
                                 messages=[
-                                    {"role": "system", "content": "You are a strict product URL validator.\n\nRULES:\n1. Your ONLY job is to filter a list of URLs.\n2. Focus closely on matching the BRAND NAME and product identifiers.\n3. Respect the provided sort order (item 1 is most relevant).\n4. Output ONLY raw JSON. No markdown fences.\n5. Format MUST be exactly: {\"valid_urls\": [\"url1\", \"url2\"]}"},
+                                    {"role": "system", "content": "You are a strict product URL validator.\n\nRULES:\n1. Your ONLY job is to filter a list of URLs.\n2. Focus closely on matching the BRAND NAME and product identifiers.\n3. Keep any PDF links (.pdf) if they appear to be manuals or spec sheets for the exact product.\n4. Respect the provided sort order (item 1 is most relevant).\n5. Output ONLY raw JSON. No markdown fences.\n6. Format MUST be exactly: {\"valid_urls\": [\"url1\", \"url2\"]}"},
                                     {"role": "user", "content": validation_prompt}
                                 ],
                                 api_key=openrouter_key,
@@ -529,10 +539,21 @@ def process_scrape(self, task_id: str):
                         alt_part = parts[1].strip() if len(parts) > 1 else ""
                         if not url_part or url_part in seen_urls:
                             continue
+                            
+                        # NATIVE PYTHON JUNK FILTER: Drop payment/checkout images before they even reach the LLM
+                        lower_url = url_part.lower()
+                        if any(junk in lower_url for junk in ['tabby', 'tamara', 'checkout', 'widget', 'assets/top', 'postpay', 'spotii', 'visa', 'mastercard', 'payment']):
+                            continue
+                            
                         seen_urls.add(url_part)
                         dense_imgs.append(f"{url_part}|{alt_part}")
                         
-                    compressed_images_text = "\n".join(dense_imgs)
+                    # Prioritize images with an ALT tag
+                    imgs_with_alt = [img for img in dense_imgs if img.split('|', 1)[1].strip()]
+                    imgs_without_alt = [img for img in dense_imgs if not img.split('|', 1)[1].strip()]
+                    prioritized_imgs = imgs_with_alt + imgs_without_alt
+                        
+                    compressed_images_text = "\n".join(prioritized_imgs[:20])
                     if isinstance(source_data, dict) and "images" in source_data:
                         del source_data["images"]
                     task.append_activity("scraping", f"Compressed {len(dense_imgs)} unique images for token-efficient LLM prompt")
@@ -596,15 +617,16 @@ def process_scrape(self, task_id: str):
                 image_instruction = (
                     "For the 'images' array, you MUST use the following raw images we scraped.\n"
                     "Format each as {\"media_type\": \"image\", \"media\": \"URL\", \"media_alt_tag\": \"ALT\"}.\n"
-                    "Sort them strictly based on relevance (best hero product shots first). Filter out any payment/bank banners, pure logos, or UI buttons if any slipped through.\n"
+                    "Sort them strictly based on relevance (best hero product shots first). ABSOLUTELY EXCLUDE ANY image URL containing 'tabby', 'tamara', 'checkout', 'widget', or 'assets'. Drop all payment/bank banners and pure logos.\n"
                     f"RAW SCRAPED IMAGES (Format: URL|ALT):\n{compressed_images_text}\n"
-                    "Do NOT drop valid product images."
+                    "Do NOT drop valid product images. CRITICAL: Output a MAXIMUM of 15 images to avoid exceeding token limits."
                 )
             else:
                 image_instruction = "For the 'images' array, rely on the images extracted in the JSON-LD data."
             # --- END REVERSIBLE FIX ---
             
-            prompt2 = f"Primary URL STRUCTURED JSON-LD:\n{primary_json.model_dump_json(indent=2)}\n\nPhase 1 Agent Data (Structured JSON):\n{json.dumps(source_data, indent=2)}\n\nExtra Search Context (Serper):\n{serper_data}\n\nCompetitor Content:\n{competitor_text}\n\nMerge the Competitor Content and JSON-LD data into the Source Data to enrich it, filling in any missing fields. {image_instruction} Output the final JSON exactly as specified in the OUTPUT FORMAT."
+            pdf_context = f"\n\nPDF Documents Found on Primary URL:\n" + "\n".join(pdf_links) if pdf_links else ""
+            prompt2 = f"Primary URL STRUCTURED JSON-LD:\n{primary_json.model_dump_json(indent=2)}\n\nPhase 1 Agent Data (Structured JSON):\n{json.dumps(source_data, indent=2)}\n\nExtra Search Context (Serper):\n{serper_data}\n\nCompetitor Content:\n{competitor_text}{pdf_context}\n\nMerge the Competitor Content and JSON-LD data into the Source Data to enrich it, filling in any missing fields. If PDF links are provided, extract them into the JSON output (e.g. as manuals). {image_instruction} Output the final JSON exactly as specified in the OUTPUT FORMAT."
             
             # Save the LLM prompt alongside raw HTML so the frontend can display both
             existing_html = task.raw_html or ""
@@ -710,21 +732,35 @@ def process_scrape(self, task_id: str):
                 
                 # --- REVERSIBLE FIX: Guarantee scraped images survive LLM truncation ---
                 # Set to False to revert to old behavior (only fallback to single og:image)
-                GUARANTEE_SCRAPED_IMAGES = True
+                GUARANTEE_SCRAPED_IMAGES = False
                 if GUARANTEE_SCRAPED_IMAGES:
-                    if not product_data.get("images") or len(product_data.get("images", [])) == 0:
-                        try:
-                            all_imgs = []
-                            for img_str in unique_images:
-                                parts = img_str.split(" | Alt: ")
-                                u_part = parts[0].replace("Image: ", "").strip()
-                                if u_part:
-                                    all_imgs.append({"media_type": "image", "media": u_part, "media_alt_tag": parts[1].strip() if len(parts) > 1 else ""})
-                            if all_imgs:
-                                product_data["images"] = all_imgs
-                                task.append_activity("ai_processing", f"LLM dropped images. Forcibly restored {len(all_imgs)} scraped images.")
-                        except Exception:
-                            pass
+                    try:
+                        if "images" not in product_data or not isinstance(product_data["images"], list):
+                            product_data["images"] = []
+                            
+                        # Keep track of what the LLM already successfully formatted
+                        llm_urls = {img.get("media") for img in product_data["images"] if isinstance(img, dict) and img.get("media")}
+                        
+                        appended_count = 0
+                        # Natively append ALL remaining scraped images that the LLM didn't have room for
+                        for img_str in unique_images:
+                            parts = img_str.split(" | Alt: ")
+                            u_part = parts[0].replace("Image: ", "").strip()
+                            alt_part = parts[1].strip() if len(parts) > 1 else ""
+                            
+                            if u_part and u_part not in llm_urls:
+                                product_data["images"].append({
+                                    "media_type": "image",
+                                    "media": u_part,
+                                    "media_alt_tag": alt_part
+                                })
+                                llm_urls.add(u_part)
+                                appended_count += 1
+                                
+                        if appended_count > 0:
+                            task.append_activity("ai_processing", f"Hybrid Image Pipeline: AI processed top images, natively appended {appended_count} remaining images.")
+                    except Exception as e:
+                        print(f"Error in hybrid image append: {e}")
                 
                 # Original fallback if all else fails
                 if not product_data.get("images") and img_val:

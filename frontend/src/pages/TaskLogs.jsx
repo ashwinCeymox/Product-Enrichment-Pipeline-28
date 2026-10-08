@@ -36,6 +36,7 @@ export default function TaskLogs() {
   };
 
   const [groupToAbort, setGroupToAbort] = useState(null);
+  const [abortProgress, setAbortProgress] = useState({ isAborting: false, current: 0, total: 0 });
 
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -56,8 +57,8 @@ export default function TaskLogs() {
     if (isManualRefresh === true) setIsRefreshing(true);
     try {
       // Fetching individual jobs and grouping them by task_name
-      const res = await api.get('/dashboard/recent-activity?limit=100');
-      const jobs = res.data.items || [];
+      const res = await api.get('/dashboard/recent-activity?limit=1000');
+      const jobs = (res.data.items || []).filter(job => job.status !== 'completed' && job.status !== 'aborted');
       
       const grouped = {};
       jobs.forEach(job => {
@@ -75,7 +76,7 @@ export default function TaskLogs() {
       Object.values(grouped).forEach(group => {
         const statuses = group.jobs.map(j => j.status);
         const hasError = statuses.some(s => ['failed', 'aborted', 'error', 'rescheduled'].includes(s));
-        const hasPending = statuses.some(s => ['pending', 'queued', 'processing', 'scraping', 'ai_processing', 'image_generation'].includes(s));
+        const hasPending = statuses.some(s => ['pending', 'queued', 'processing', 'scraping', 'ai_processing', 'image_generation', 'waiting_for_approval', 'image_generation_complete'].includes(s));
         
         if (hasError) {
           group.status = 'error';
@@ -165,15 +166,32 @@ export default function TaskLogs() {
 
   const confirmAbortGroup = async () => {
     if (!groupToAbort) return;
-    try {
-      await api.delete(`/jobs/task/${encodeURIComponent(groupToAbort)}`);
-      setToastMessage(`Group ${groupToAbort} aborted`);
-      fetchTasks();
-    } catch (err) {
-      showToast("Failed to abort group.");
-    } finally {
-      setGroupToAbort(null);
+    
+    const group = tasks.find(t => t.task_name === groupToAbort);
+    if (!group || !group.jobs) {
+        setGroupToAbort(null);
+        return;
     }
+    
+    const jobsToDelete = group.jobs;
+    setAbortProgress({ isAborting: true, current: 0, total: jobsToDelete.length });
+    
+    let successCount = 0;
+    
+    for (let i = 0; i < jobsToDelete.length; i++) {
+        try {
+            await api.delete(`/jobs/${jobsToDelete[i].job_id}`);
+            successCount++;
+        } catch (err) {
+            console.error(`Failed to delete job ${jobsToDelete[i].job_id}`, err);
+        }
+        setAbortProgress(prev => ({ ...prev, current: i + 1 }));
+    }
+    
+    setToastMessage(`Successfully aborted ${successCount} jobs in ${groupToAbort}`);
+    setAbortProgress({ isAborting: false, current: 0, total: 0 });
+    setGroupToAbort(null);
+    fetchTasks();
   };
 
   const handleAbortConfirm = async () => {
@@ -262,10 +280,11 @@ export default function TaskLogs() {
       case 'ai_processing': return 'Ai Processing';
       case 'image_generation': return 'Image Generation';
       case 'waiting_for_approval': return 'Pending Review';
-      case 'success': return 'Success';
+      case 'success': return 'Completed';
       case 'failed': return 'Failed';
       case 'error': return 'Error';
       case 'rescheduled': return 'Rescheduled';
+      case 'completed': return 'Finalized';
       default: return status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Processing';
     }
   };
@@ -485,7 +504,7 @@ export default function TaskLogs() {
                       <div className={clsx("w-2 h-2 rounded-full",
                         task.status === 'completed' ? "bg-emerald-600" : "bg-indigo-600 animate-pulse"
                       )}></div>
-                      {task.status === 'completed' ? 'Completed' : 'Processing'}
+                      {task.status === 'completed' ? 'Finalized' : 'Processing'}
                     </div>
                     
                     {/* Abort Group Button */}
@@ -788,29 +807,48 @@ export default function TaskLogs() {
       {groupToAbort && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div className="bg-white border border-slate-200 rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-start gap-4 mb-6">
-              <div className="w-10 h-10 bg-rose-50 rounded-full flex items-center justify-center border border-rose-100 shrink-0">
-                <Trash2 className="text-rose-600" size={20} />
+            {abortProgress.isAborting ? (
+              <div className="flex flex-col items-center justify-center py-4">
+                <Loader2 className="w-10 h-10 text-rose-600 animate-spin mb-4" />
+                <h3 className="text-lg font-bold text-slate-900 mb-2">Aborting Jobs...</h3>
+                <div className="w-full bg-slate-100 rounded-full h-2.5 mb-2 overflow-hidden">
+                  <div 
+                    className="bg-rose-600 h-2.5 rounded-full transition-all duration-300" 
+                    style={{ width: `${(abortProgress.current / Math.max(abortProgress.total, 1)) * 100}%` }}
+                  ></div>
+                </div>
+                <p className="text-sm font-medium text-slate-600">
+                  {abortProgress.current} / {abortProgress.total} deleted
+                </p>
+                <p className="text-xs text-slate-400 mt-4 text-center">Please keep this window open until complete.</p>
               </div>
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">Abort Group</h3>
-                <p className="text-sm text-slate-500 mt-1">Are you sure you want to permanently abort and delete all jobs under <strong>{groupToAbort}</strong>? This action cannot be undone.</p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <button 
-                onClick={() => setGroupToAbort(null)}
-                className="flex-1 py-2.5 rounded-xl text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 font-semibold transition-colors"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={confirmAbortGroup}
-                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl transition-colors shadow-sm"
-              >
-                Abort All
-              </button>
-            </div>
+            ) : (
+              <>
+                <div className="flex items-start gap-4 mb-6">
+                  <div className="w-10 h-10 bg-rose-50 rounded-full flex items-center justify-center border border-rose-100 shrink-0">
+                    <Trash2 className="text-rose-600" size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">Abort Group</h3>
+                    <p className="text-sm text-slate-500 mt-1">Are you sure you want to permanently abort and delete all jobs under <strong>{groupToAbort}</strong>? This action cannot be undone.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setGroupToAbort(null)}
+                    className="flex-1 py-2.5 rounded-xl text-slate-600 bg-white border border-slate-200 hover:bg-slate-50 font-semibold transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={confirmAbortGroup}
+                    className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold rounded-xl transition-colors shadow-sm"
+                  >
+                    Abort All
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

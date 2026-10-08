@@ -19,7 +19,10 @@ IMAGE EXTRACTION RULES (CRITICAL)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 - You MUST include ALL valid images from the "Found Images" list. DO NOT TRUNCATE this array.
 - SORTING: Place the absolute best, clearest product photos (hero shots, front/side views) at the VERY TOP of the array.
-- EXCLUDE: Logos, UI widgets, payment banners (Tabby/Tamara), and navigation menus.
+- ABSOLUTELY EXCLUDE JUNK IMAGES: 
+  * Payment banners and BNPL logos (Tabby, Tamara, Postpay, Spotii)
+  * Any image URL containing the words: "tabby", "tamara", "checkout", "assets/top", "widget"
+  * UI widgets, site logos, social media icons, and navigation menus.
 - Format: {"media_type": "image", "media": "URL_HERE", "media_alt_tag": "short description"}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━

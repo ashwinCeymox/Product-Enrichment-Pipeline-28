@@ -22,6 +22,7 @@ export default function ContentPreview() {
   const [bundles, setBundles] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [saving, setSaving] = useState(false);
+  const userEditedRef = React.useRef(false); // Prevents poll from overwriting local edits
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try { return localStorage.getItem('contentPreview_sidebarOpen') !== 'false'; } catch { return true; }
@@ -74,9 +75,9 @@ export default function ContentPreview() {
 
   useEffect(() => {
     if (taskName) {
-      api.get(`/jobs/?task_name=${encodeURIComponent(taskName)}`)
+      api.get(`/jobs/?task_name=${encodeURIComponent(taskName)}&limit=1000`)
         .then(res => {
-          const activeJobs = (res.data.jobs || []).filter(j => !['completed', 'aborted', 'failed', 'removed'].includes(j.status));
+          const activeJobs = (res.data.jobs || []).filter(j => j.status !== 'completed' && j.status !== 'removed' && j.status !== 'aborted');
           setBundles(activeJobs);
         })
         .catch(err => console.error(err));
@@ -186,29 +187,32 @@ export default function ContentPreview() {
         setRealAssets(prev => JSON.stringify(prev) !== JSON.stringify(combined) ? combined : prev);
         
         // 2. Merge the live images array and AI images into the user's current jsonData
-        setJsonData(prevJsonStr => {
-          try {
-            if (!prevJsonStr) return prevJsonStr; // skip if buffer is empty
-            const parsed = JSON.parse(prevJsonStr);
-            let updated = false;
-            
-            if (JSON.stringify(parsed.images) !== JSON.stringify(imagesList)) {
-              parsed.images = imagesList;
-              updated = true;
+        // SKIP if the user has made local edits (deletions, text changes) to avoid overwriting them
+        if (!userEditedRef.current) {
+          setJsonData(prevJsonStr => {
+            try {
+              if (!prevJsonStr) return prevJsonStr; // skip if buffer is empty
+              const parsed = JSON.parse(prevJsonStr);
+              let updated = false;
+              
+              if (JSON.stringify(parsed.images) !== JSON.stringify(imagesList)) {
+                parsed.images = imagesList;
+                updated = true;
+              }
+              if (JSON.stringify(parsed['Product Highlights Ai Images']) !== JSON.stringify(aiImagesDict)) {
+                parsed['Product Highlights Ai Images'] = aiImagesDict;
+                updated = true;
+              }
+              
+              if (updated) {
+                return JSON.stringify(parsed, null, 2);
+              }
+              return prevJsonStr;
+            } catch (e) {
+              return prevJsonStr;
             }
-            if (JSON.stringify(parsed['Product Highlights Ai Images']) !== JSON.stringify(aiImagesDict)) {
-              parsed['Product Highlights Ai Images'] = aiImagesDict;
-              updated = true;
-            }
-            
-            if (updated) {
-              return JSON.stringify(parsed, null, 2);
-            }
-            return prevJsonStr;
-          } catch (e) {
-            return prevJsonStr;
-          }
-        });
+          });
+        }
         
         // 3. Update the job state itself
         setJob(prev => {
@@ -245,6 +249,7 @@ export default function ContentPreview() {
         current = current[path[i]];
       }
       current[path[path.length - 1]] = value;
+      userEditedRef.current = true; // Prevent poll from overwriting this edit
       setJsonData(JSON.stringify(newParsed, null, 2));
     } catch (e) {
       console.error(e);
@@ -260,6 +265,7 @@ export default function ContentPreview() {
       }
       if (Array.isArray(current)) {
         current.splice(indexToRemove, 1);
+        userEditedRef.current = true; // Prevent poll from overwriting this edit
         setJsonData(JSON.stringify(newParsed, null, 2));
       }
     } catch (e) {
@@ -283,7 +289,7 @@ export default function ContentPreview() {
       return (
         <div className="flex flex-col gap-3 pl-4 border-l-2 border-indigo-200 mt-1 mb-2">
           {data.map((item, idx) => (
-            <div key={idx} className="flex gap-3 items-start bg-slate-50/50 p-2 rounded border border-slate-100 relative group pr-8">
+            <div key={JSON.stringify(item).substring(0, 30) + idx} className="flex gap-3 items-start bg-slate-50/50 p-2 rounded border border-slate-100 relative group pr-8">
               <span className="text-[10px] font-bold text-slate-400 mt-2 w-4 shrink-0">{idx + 1}.</span>
               <div className="flex-1 overflow-hidden">
                 {renderRecursiveEditor(item, [...path, idx])}
@@ -407,12 +413,12 @@ export default function ContentPreview() {
       await api.post(`/jobs/${currentJobId}/finalize`, {});
       
       // 4. Pop this task from the sidebar queue
-      const activeBundles = bundles.filter(b => b.id !== currentJobId && !['completed', 'aborted', 'failed', 'removed'].includes(b.status));
+      const activeBundles = bundles.filter(b => b.id !== currentJobId && b.status !== 'completed' && b.status !== 'removed');
       setBundles(activeBundles);
       
       // 5. Show toast and navigate to the next subtask
       if (activeBundles.length > 0) {
-        showToast('The following subtask has been saved to downloads.');
+        showToast('Subtask finalized and saved to downloads.');
         navigate(`/task-logs/content-preview/${activeBundles[0].id}?taskName=${encodeURIComponent(taskName)}&tab=${activeTab}`);
       } else {
         await fetchNextTaskGroup();
@@ -456,7 +462,9 @@ export default function ContentPreview() {
       setJsonData('');
       setRealAssets([]);
       
-      const activeBundles = bundles.filter(b => b.id !== itemToRemove && !['completed', 'aborted', 'failed', 'removed'].includes(b.status));
+      const activeBundles = bundles.filter(b => b.id !== itemToRemove && b.status !== 'completed' && b.status !== 'removed');
+      setBundles(activeBundles);
+      
       if (activeBundles.length > 0) {
         navigate(`/task-logs/content-preview/${activeBundles[0].id}?taskName=${encodeURIComponent(taskName)}&tab=${activeTab}`);
       } else {
@@ -628,7 +636,7 @@ export default function ContentPreview() {
 
           {job?.generate_ai_images && (
             <>
-              {['image_generation', 'image_generation_stopped', 'image_generation_complete', 'image_generation_failed'].includes(job?.status) ? (
+              {['image_generation', 'image_generation_stopped', 'image_generation_complete', 'image_generation_failed'].includes(job?.status) || (job?.product_data?.['Product Highlights Ai Images']?.lifestyle_images?.length > 0 || job?.product_data?.['Product Highlights Ai Images']?.feature_images?.length > 0) ? (
                 <button
                   onClick={() => navigate(`/task-logs/ai-images/${jobId}?taskName=${encodeURIComponent(taskName)}`)}
                   className="py-1.5 px-4 bg-[#00A389]/10 text-[#00A389] border border-[#00A389]/30 rounded-md text-xs font-semibold hover:bg-[#00A389]/20 transition-colors flex justify-center items-center gap-2 shadow-sm"
@@ -1021,7 +1029,7 @@ export default function ContentPreview() {
                 <button
                   onClick={() => {
                     setShowCompletionModal(false);
-                    navigate(`/task-logs/content-preview/${nextTaskGroup.id}?taskName=${encodeURIComponent(nextTaskGroup.task_name)}&tab=table`);
+                    navigate(`/task-logs/content-preview/${nextTaskGroup.job_id}?taskName=${encodeURIComponent(nextTaskGroup.task_name)}&tab=table`);
                   }}
                   className="w-full py-3 px-4 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2 shadow-sm"
                 >

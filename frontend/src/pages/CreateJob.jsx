@@ -168,6 +168,7 @@ export default function CreateJob() {
 
       const res = await api.post('/jobs', payload);
       setMessage(`Success! ${res.data.message}`);
+      setTimeout(() => setMessage(''), 5000);
       setUrls('');
       setTaskName('');
       setSelectedSearchUrls([]);
@@ -227,6 +228,7 @@ export default function CreateJob() {
     try {
       const res = await api.post(`/jobs/upload-csv?${queryParams.toString()}`, formData);
       setMessage(`Success! ${res.data.message}`);
+      setTimeout(() => setMessage(''), 5000);
       setUrls('');
       setTaskName('');
       setSelectedSearchUrls([]);

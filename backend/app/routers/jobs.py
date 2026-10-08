@@ -295,6 +295,8 @@ async def upload_csv(
     valid_urls, invalid_urls = _validate_urls(raw_urls)
     if not valid_urls:
         raise HTTPException(status_code=422, detail="No valid URLs found in CSV.")
+        
+    jobs_list = [{"url": str(u), "reference_urls": None} for u in valid_urls]
 
 
 
@@ -558,41 +560,118 @@ def reschedule_job(
     if old_job.status not in ["failed", "aborted", "image_generation_failed", "image_generation_stopped", "error", "rescheduled"]:
         raise HTTPException(status_code=400, detail="Only failed or aborted jobs can be rescheduled")
 
-    # 2. Extract properties to preserve
-    valid_urls = [old_job.url] if old_job.url else []
-    if not valid_urls:
-        raise HTTPException(status_code=400, detail="Cannot reschedule job with no URL")
+    # Reset basic error states
+    old_job.error_message = None
+    if payload and payload.category_override:
+        old_job.category_override = payload.category_override
+    if payload and payload.scheduled_date:
+        old_job.scheduled_date = payload.scheduled_date
 
-    task_name = old_job.task_name
-    priority = old_job.priority
-    created_by = old_job.created_by if hasattr(old_job, "created_by") else "admin"
-    product_type = getattr(old_job, "product_type", "simple")
-    generate_ai_images = getattr(old_job, "generate_ai_images", False)
-    category_override = payload.category_override if payload else None
+    # Smart Checkpoint Logic
+    has_product_data = bool(old_job.product_data)
 
-    # 3. Delete old job (simulating frontend delete call from PRO-ACTIVE-FITNESS)
-    delete_job(job_id, db)
-    
-    # 4. Create new job with same properties (simulating frontend post call from PRO-ACTIVE-FITNESS)
-    batch_id, jobs = _build_jobs(
-        db,
-        jobs_to_create=jobs_list,
-        task_name=task_name,
-        priority=priority,
-        scheduled_date=payload.scheduled_date if payload else None,
-        created_by=created_by,
-        product_type=product_type,
-        generate_ai_images=generate_ai_images,
-        background_tasks=background_tasks,
-    )
-    
-    # 5. If a category override was specified, stamp it on the newly created job
-    if category_override and jobs:
-        new_job = jobs[0]
-        new_job.category_override = category_override
+    if has_product_data and old_job.generate_ai_images:
+        # Scenario B: Scraping finished, but image generation failed. Resume images!
+        old_job.status = "image_generation"
+        old_job.progress = 100
+        old_job.append_activity("rescheduled", "Resumed failed image generation checkpoint")
         db.commit()
-    
-    return {"status": "success", "message": "Job rescheduled successfully", "new_job_id": jobs[0].id}
+
+        from app.tasks.gen_images import generate_images_task
+        task = generate_images_task.delay(job_id)
+        old_job.celery_task_id = task.id
+        db.commit()
+    else:
+        # Scenario A: Failed during scraping or no images requested. Start from scratch.
+        old_job.status = "queued"
+        old_job.progress = 0
+        old_job.source_data = None
+        old_job.product_data = None
+        old_job.append_activity("rescheduled", "Restarted job from the beginning")
+        db.commit()
+
+        from app.tasks.scrape import process_scrape
+        task = process_scrape.delay(job_id)
+        old_job.celery_task_id = task.id
+        db.commit()
+
+    return {"status": "success", "message": "Job rescheduled successfully", "new_job_id": job_id}
+
+
+@router.delete("/task/{task_name}", summary="Abort all jobs for a specific task group")
+def delete_task_group(task_name: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    jobs = db.query(ScrapeTask).filter(ScrapeTask.task_name == task_name).all()
+    if not jobs:
+        raise HTTPException(status_code=404, detail="No jobs found for this task name")
+
+    # ── Phase 1 (Instant): Mark all as aborted + revoke Celery tasks ──
+    job_ids = []
+    for job in jobs:
+        job_ids.append(str(job.id))
+        # Revoke any active Celery worker so it stops processing
+        if job.celery_task_id:
+            try:
+                from app.celery_app import celery_app as _celery
+                _celery.control.revoke(job.celery_task_id, terminate=True, signal="SIGTERM")
+            except Exception:
+                pass
+        job.status = "aborted"
+        job.error_message = "Aborted by user"
+    db.commit()
+
+    # ── Phase 2 (Background): Heavy cleanup without blocking the UI ──
+    def _cleanup_task_group(task_job_ids: list[str]):
+        """Runs in a background thread — deletes files and DB rows."""
+        import shutil
+        import os
+        from app.database import SessionLocal
+        from app.models.image_asset import ImageAsset
+
+        cleanup_db = SessionLocal()
+        try:
+            from app.tasks.tools.image_generator import _safe_folder_name
+            IMAGE_OUTPUT_DIR = os.getenv("IMAGE_OUTPUT_DIR", "output/images")
+
+            for jid in task_job_ids:
+                job = cleanup_db.query(ScrapeTask).filter(ScrapeTask.id == jid).first()
+                if not job:
+                    continue
+
+                # Cleanup image output folder
+                sku = job.task_name
+                if job.product_data:
+                    sku = job.product_data.get("product_identity", {}).get("sku", job.task_name)
+                full_sku = f"{sku}_{job.id}"
+                safe_sku = _safe_folder_name(full_sku)
+                folder = os.path.join(IMAGE_OUTPUT_DIR, safe_sku)
+                if os.path.exists(folder):
+                    try:
+                        shutil.rmtree(folder)
+                    except Exception:
+                        pass
+
+                # Cleanup reference cache folder
+                ref_dir = os.path.join("output/reference_cache", str(job.id))
+                if os.path.exists(ref_dir):
+                    try:
+                        shutil.rmtree(ref_dir)
+                    except Exception:
+                        pass
+
+                # Let SQLAlchemy cascade handle child tables
+                cleanup_db.delete(job)
+
+            cleanup_db.commit()
+            print(f"[cleanup] Successfully deleted {len(task_job_ids)} jobs for task group")
+        except Exception as e:
+            cleanup_db.rollback()
+            print(f"[cleanup] Error during task group cleanup: {e}")
+        finally:
+            cleanup_db.close()
+
+    background_tasks.add_task(_cleanup_task_group, job_ids)
+
+    return {"status": "success", "message": f"Aborted {len(job_ids)} jobs. Cleanup running in background."}
 
 
 @router.delete("/{job_id}", summary="Abort a job or mark as hidden")
@@ -601,6 +680,14 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
         
+    # Revoke Celery task if it is actively running
+    if job.celery_task_id:
+        try:
+            from app.celery_app import celery_app as _celery
+            _celery.control.revoke(job.celery_task_id, terminate=True, signal="SIGTERM")
+        except Exception:
+            pass
+            
     import shutil
     import os
     
@@ -610,7 +697,6 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
         sku = job.product_data.get("product_identity", {}).get("sku", job.task_name)
         
     from app.tasks.tools.image_generator import _safe_folder_name
-    # Exactly matching gen_images.py logic
     full_sku = f"{sku}_{job.id}"
     safe_sku = _safe_folder_name(full_sku)
         
@@ -619,7 +705,6 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
     if os.path.exists(folder_to_delete):
         try:
             shutil.rmtree(folder_to_delete)
-            print(f"Cleaned up images folder upon deletion: {folder_to_delete}")
         except Exception as e:
             print(f"Failed to clean up images folder {folder_to_delete}: {e}")
                 
@@ -628,61 +713,13 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
     if os.path.exists(reference_cache_dir):
         try:
             shutil.rmtree(reference_cache_dir)
-            print(f"Cleaned up reference cache folder upon deletion: {reference_cache_dir}")
         except Exception as e:
             print(f"Failed to clean up reference cache {reference_cache_dir}: {e}")
     
-    from app.models.image_asset import ImageAsset
-    db.query(ImageAsset).filter(ImageAsset.scrape_task_id == job.id).delete()
+    # Let SQLAlchemy cascade handle ImageAsset + ExtractedProduct + GeneratedPage cleanup
     db.delete(job)
     db.commit()
     return {"status": "success", "message": "Job deleted completely"}
-
-
-@router.delete("/task/{task_name}", summary="Abort all jobs for a specific task group")
-def delete_task_group(task_name: str, db: Session = Depends(get_db)):
-    jobs = db.query(ScrapeTask).filter(ScrapeTask.task_name == task_name).all()
-    if not jobs:
-        raise HTTPException(status_code=404, detail="No jobs found for this task name")
-        
-    import shutil
-    import os
-    from app.tasks.tools.image_generator import _safe_folder_name
-    from app.models.image_asset import ImageAsset
-    
-    deleted_count = 0
-    IMAGE_OUTPUT_DIR = os.getenv("IMAGE_OUTPUT_DIR", "output/images")
-    
-    for job in jobs:
-        # Cleanup images folder
-        sku = job.task_name
-        if job.product_data:
-            sku = job.product_data.get("product_identity", {}).get("sku", job.task_name)
-            
-        full_sku = f"{sku}_{job.id}"
-        safe_sku = _safe_folder_name(full_sku)
-        folder_to_delete = os.path.join(IMAGE_OUTPUT_DIR, safe_sku)
-        
-        if os.path.exists(folder_to_delete):
-            try:
-                shutil.rmtree(folder_to_delete)
-            except Exception:
-                pass
-                
-        # Cleanup reference cache folder
-        reference_cache_dir = os.path.join("output/reference_cache", str(job.id))
-        if os.path.exists(reference_cache_dir):
-            try:
-                shutil.rmtree(reference_cache_dir)
-            except Exception:
-                pass
-        
-        db.query(ImageAsset).filter(ImageAsset.scrape_task_id == job.id).delete()
-        db.delete(job)
-        deleted_count += 1
-        
-    db.commit()
-    return {"status": "success", "message": f"Deleted {deleted_count} jobs completely"}
 
 
 import zipfile

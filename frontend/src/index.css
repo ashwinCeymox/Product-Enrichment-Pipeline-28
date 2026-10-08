@@ -17,6 +17,20 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+
+  /* Restore cursor: pointer for buttons and interactive inputs (removed in Tailwind v4) */
+  button, 
+  [role="button"],
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"],
+  select,
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="date"],
+  input[type="file"] {
+    cursor: pointer;
+  }
 }
 
 @utility sidebar-collapsed {
